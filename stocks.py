@@ -1,6 +1,9 @@
 import socket
 import time
 import re
+import os
+import yfinance as yf
+from colorama import Fore
 
 server = 'irc.chat.twitch.tv'
 port = 6667
@@ -31,5 +34,20 @@ while True:
 				dick[tickler].append(time.time())
 			else:
 				dick[tickler] = [time.time()]
-	for tickler in dick:
-		print("{}: {}".format(tickler, len(dick[tickler])))
+	
+	votes = {tickler: len(dick[tickler]) for tickler in dick}
+	votes = dict(sorted(votes.items(), key=lambda x:x[1], reverse=True))
+	os.system('clear')
+	print()
+	for tickler in votes:
+		try:
+			quote = yf.Ticker(tickler).info
+			price = (quote['bid'] + quote['ask']) / 2
+			percent_change =100 * (price - quote['previousClose'])/ quote['previousClose']
+			if percent_change > 0:
+				print(Fore.GREEN, end="")
+			else:
+				print(Fore.RED, end="")
+			print(" {:7} ${:<10.2f} {:<+3.2f}%".format(tickler, price, percent_change))
+		except:
+			pass
