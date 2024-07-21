@@ -72,7 +72,11 @@ def rho_put(d_2, strike_price, years_to_expiry, risk_free_rate):
 cal = mcal.get_calendar("NYSE")
 today = datetime.datetime.combine(datetime.date.today(), datetime.time())
 today_str = today.strftime("%Y-%m-%d")
-risk_free_rate = yf.Ticker("^IRX").info['dayLow']/100
+try:
+	risk_free_rate = yf.Ticker("^IRX").info['dayLow']/100
+except:
+	risk_free_rate = 0.05
+	
 
 '''
 contractSymbol              SPY240719C00650000
@@ -108,49 +112,59 @@ while(True):
 		dividend_yield = info['yield']
 	else:
 		dividend_yield = 0
+	i = 1
 	for option in options:
-		bdi = mcal.date_range(
-			cal.schedule(
-				start_date = today_str,
-				end_date = option),
-			frequency = '1D')
-		bdi = bdi.normalize()
-		s = pd.Series(data = 1, index=bdi)
-		cdi = pd.date_range(
-			start = bdi.min(),
-			end = bdi.max())
-		s = s.reindex(index=cdi).fillna(0).astype(int).cumsum()
 		dte = (datetime.datetime.strptime(option, "%Y-%m-%d") - today).days
-		tdte = s[option] - s[today_str]
-		years_to_expiry = dte/365.25
-		print("{} {} CALLS {}DTE ({} trading days)".format(ticker, option, dte, tdte))
+		print("{:<3} {} ({}DTE)	CALLS/PUTS".format(i, option, dte))
+		i += 1
+	com = input("Select: ")
+	
+	option = options[int(com) - 1]
+	
+	'''
+	bdi = mcal.date_range(
+		cal.schedule(
+			start_date = today_str,
+			end_date = option),
+		frequency = '1D')
+	bdi = bdi.normalize()
+	s = pd.Series(data = 1, index=bdi)
+	cdi = pd.date_range(
+		start = bdi.min(),
+		end = bdi.max())
+	s = s.reindex(index=cdi).fillna(0).astype(int).cumsum()
+	tdte = s[option] - s[today_str]
+	'''
 
-		chain = quote.option_chain(option)
-		calls = chain.calls
-		calls['mark'] = (calls['bid'] + calls['ask'])/2
-		calls['ivol'] = calls.apply(lambda x: ImpliedVolatilityCall(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['mark']), axis = 1)
-		calls['d1'] = calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
-		calls['d2'] = calls.apply(lambda x: d2(x['d1'], years_to_expiry, x['ivol']), axis=1)
-		calls['delta'] = calls.apply(lambda x: delta_call(x['d1'], years_to_expiry, dividend_yield), axis=1)
-		calls['omega'] = calls['delta'] * stock_price / calls['mark']
-		calls['gamma'] = calls.apply(lambda x: gamma(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
-		calls['theta'] = calls.apply(lambda x: theta_call(x['d1'], x['d2'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
-		calls['vega'] = calls.apply(lambda x: vega(x['d1'], stock_price, years_to_expiry, x['ivol']), axis=1)
-		calls['rho'] = calls.apply(lambda x: rho_call(x['d2'], x['strike'], years_to_expiry, risk_free_rate), axis=1)
-		calls['iprob'] = calls.apply(lambda x: ImpliedProbabilityCall(x['d2']), axis=1)
-		print(calls[['strike', 'bid', 'omega', 'delta', 'theta', 'ivol', 'iprob']].iloc[::-1])
+	dte = (datetime.datetime.strptime(option, "%Y-%m-%d") - today).days
+	years_to_expiry = dte/365.25
+	print("{} {} CALLS {}DTE".format(ticker, option, dte))
 
-		print("{} {} PUTS {}DTE ({} trading days)".format(ticker, option, dte, tdte))
-		puts = chain.puts
-		puts['mark'] = (puts['bid'] + puts['ask'])/2
-		puts['ivol'] = puts.apply(lambda x: ImpliedVolatilityPut(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['mark']), axis = 1)
-		puts['d1'] = puts.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
-		puts['d2'] = puts.apply(lambda x: d2(x['d1'], years_to_expiry, x['ivol']), axis=1)
-		puts['delta'] = puts.apply(lambda x: delta_put(x['d1'], years_to_expiry, dividend_yield), axis=1)
-		puts['omega'] = puts['delta'] * stock_price / puts['mark']
-		puts['gamma'] = puts.apply(lambda x: gamma(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
-		puts['theta'] = puts.apply(lambda x: theta_put(x['d1'], x['d2'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
-		puts['vega'] = puts.apply(lambda x: vega(x['d1'], stock_price, years_to_expiry, x['ivol']), axis=1)
-		puts['rho'] = puts.apply(lambda x: rho_put(x['d2'], x['strike'], years_to_expiry, risk_free_rate), axis=1)
-		puts['iprob'] = puts.apply(lambda x: ImpliedProbabilityPut(x['d2']), axis=1)
-		print(puts[['strike', 'bid', 'omega', 'delta', 'theta', 'ivol', 'iprob']].iloc[::-1])
+	chain = quote.option_chain(option)
+	calls = chain.calls
+	calls['mark'] = (calls['bid'] + calls['ask'])/2
+	calls['ivol'] = calls.apply(lambda x: ImpliedVolatilityCall(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['mark']), axis = 1)
+	calls['d1'] = calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
+	calls['d2'] = calls.apply(lambda x: d2(x['d1'], years_to_expiry, x['ivol']), axis=1)
+	calls['delta'] = calls.apply(lambda x: delta_call(x['d1'], years_to_expiry, dividend_yield), axis=1)
+	calls['omega'] = calls['delta'] * stock_price / calls['mark']
+	calls['gamma'] = calls.apply(lambda x: gamma(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
+	calls['theta'] = calls.apply(lambda x: theta_call(x['d1'], x['d2'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
+	calls['vega'] = calls.apply(lambda x: vega(x['d1'], stock_price, years_to_expiry, x['ivol']), axis=1)
+	calls['rho'] = calls.apply(lambda x: rho_call(x['d2'], x['strike'], years_to_expiry, risk_free_rate), axis=1)
+	calls['iprob'] = calls.apply(lambda x: ImpliedProbabilityCall(x['d2']), axis=1)
+	print(calls[['strike', 'bid', 'omega', 'delta', 'theta', 'ivol', 'iprob']].iloc[::-1])
+	print("{} {} PUTS {}DTE".format(ticker, option, dte))
+	puts = chain.puts
+	puts['mark'] = (puts['bid'] + puts['ask'])/2
+	puts['ivol'] = puts.apply(lambda x: ImpliedVolatilityPut(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['mark']), axis = 1)
+	puts['d1'] = puts.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
+	puts['d2'] = puts.apply(lambda x: d2(x['d1'], years_to_expiry, x['ivol']), axis=1)
+	puts['delta'] = puts.apply(lambda x: delta_put(x['d1'], years_to_expiry, dividend_yield), axis=1)
+	puts['omega'] = puts['delta'] * stock_price / puts['mark']
+	puts['gamma'] = puts.apply(lambda x: gamma(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
+	puts['theta'] = puts.apply(lambda x: theta_put(x['d1'], x['d2'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
+	puts['vega'] = puts.apply(lambda x: vega(x['d1'], stock_price, years_to_expiry, x['ivol']), axis=1)
+	puts['rho'] = puts.apply(lambda x: rho_put(x['d2'], x['strike'], years_to_expiry, risk_free_rate), axis=1)
+	puts['iprob'] = puts.apply(lambda x: ImpliedProbabilityPut(x['d2']), axis=1)
+	print(puts[['strike', 'bid', 'omega', 'delta', 'theta', 'ivol', 'iprob']].iloc[::-1])
