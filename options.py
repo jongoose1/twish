@@ -1,5 +1,7 @@
 import yfinance as yf
 import datetime
+from zoneinfo import ZoneInfo
+import time
 import numpy as np
 from scipy import optimize
 from scipy.stats import norm
@@ -11,10 +13,14 @@ def d2(d_1, years_to_expiry, volatility):
 	return d_1 - volatility * np.sqrt(years_to_expiry)
 
 def BSM_CALL(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yield, volatility):
+	if volatility == 0:
+		return max(stock_price*(1+risk_free_rate)**years_to_expiry - strike_price, 0)
 	d_1 = d1(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yield, volatility)
 	return stock_price * np.exp(-dividend_yield*years_to_expiry) * norm.cdf(d_1) - strike_price * np.exp(-risk_free_rate*years_to_expiry) * norm.cdf(d2(d_1, years_to_expiry, volatility))
 
 def BSM_PUT(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yield, volatility):
+	if volatility == 0:
+		return max(strike_price - stock_price*(1+risk_free_rate)**years_to_expiry, 0)
 	d_1 = d1(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yield, volatility)
 	return strike_price * np.exp(-risk_free_rate*years_to_expiry) * norm.cdf(-d2(d_1, years_to_expiry, volatility)) - stock_price * np.exp(-dividend_yield*years_to_expiry) * norm.cdf(-d_1)
 
@@ -27,9 +33,13 @@ def put_iv_error(iv_guess, *args):
 	return (BSM_PUT(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yield, iv_guess)-put_price)**2
 
 def ImpliedVolatilityCall(guess, *args):
+	if guess == 0:
+		guess = 0.3
 	return optimize.fmin(func=call_iv_error, x0=guess, args=args, disp=False)[0]
 
 def ImpliedVolatilityPut(guess, *args):
+	if guess == 0:
+		guess = 0.3
 	return optimize.fmin(func=put_iv_error, x0=guess, args=args, disp=False)[0]
 
 def ImpliedProbabilityCall(d_2):
@@ -64,10 +74,7 @@ def rho_put(d_2, strike_price, years_to_expiry, risk_free_rate):
 
 def dte(option):
 	# option str %Y-%m-%d
-	return (
-		datetime.datetime.strptime(option, "%Y-%m-%d")
-		- datetime.datetime.combine(datetime.date.today(), datetime.time())
-	).days
+	return (datetime.datetime.strptime(option, "%Y-%m-%d").replace(hour=16, tzinfo=ZoneInfo('America/New_York')).timestamp() - time.time()) / 86400
 
 def get_rfr():
 	try:
@@ -76,6 +83,57 @@ def get_rfr():
 		print("Using fake risk free rate")
 		risk_free_rate = 0.05
 	return risk_free_rate
+
+def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, dividend_yield):
+	calls = chain.calls
+	calls['mark'] 	= (calls['bid'] + calls['ask'])/2
+	calls['spread'] = (calls['ask'] - calls['bid'])/calls['mark']
+	calls['ivol'] 	= calls.apply(lambda x: ImpliedVolatilityCall(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['mark']), axis = 1)
+	calls['d1'] 	= calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
+	calls['d2'] 	= calls.apply(lambda x: d2(x['d1'], years_to_expiry, x['ivol']), axis=1)
+	calls['delta'] 	= calls.apply(lambda x: delta_call(x['d1'], years_to_expiry, dividend_yield), axis=1)
+	calls['omega'] 	= calls['delta'] * stock_price / calls['ask']
+	calls['gamma'] 	= calls.apply(lambda x: gamma(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
+	calls['theta'] 	= calls.apply(lambda x: theta_call(x['d1'], x['d2'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
+	calls['vega'] 	= calls.apply(lambda x: vega(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
+	calls['rho'] 	= calls.apply(lambda x: rho_call(x['d2'], x['strike'], years_to_expiry, risk_free_rate), axis=1)
+	calls['iprob'] 	= calls.apply(lambda x: ImpliedProbabilityCall(x['d2']), axis=1)
+	calls['ivolBid'] 	= calls.apply(lambda x: ImpliedVolatilityCall(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['bid']), axis = 1)
+	calls['d1Bid'] 		= calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolBid']), axis=1)
+	calls['d2Bid'] 		= calls.apply(lambda x: d2(x['d1Bid'], years_to_expiry, x['ivolBid']), axis=1)
+	calls['iprobBid'] 	= calls.apply(lambda x: ImpliedProbabilityCall(x['d2Bid']), axis=1)
+	calls['ivolAsk'] 	= calls.apply(lambda x: ImpliedVolatilityCall(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ask']), axis = 1)
+	calls['d1Ask'] 		= calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolAsk']), axis=1)
+	calls['d2Ask'] 		= calls.apply(lambda x: d2(x['d1Ask'], years_to_expiry, x['ivolAsk']), axis=1)
+	calls['iprobAsk'] 	= calls.apply(lambda x: ImpliedProbabilityCall(x['d2Ask']), axis=1)
+	calls['%TM'] 		= (calls['strike'] - stock_price) / stock_price
+	calls['intrinsic'] 	= calls.apply(lambda x: max(stock_price - x['strike'], 0), axis=1)
+	calls['extrinsic'] 	= calls['mark'] - calls['intrinsic']
+
+	puts = chain.puts
+	puts['mark'] 	= (puts['bid'] + puts['ask'])/2
+	puts['spread'] 	= (puts['ask'] - puts['bid'])/puts['mark']
+	puts['ivol'] 	= puts.apply(lambda x: ImpliedVolatilityPut(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['mark']), axis = 1)
+	puts['d1'] 		= puts.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
+	puts['d2'] 		= puts.apply(lambda x: d2(x['d1'], years_to_expiry, x['ivol']), axis=1)
+	puts['delta'] 	= puts.apply(lambda x: delta_put(x['d1'], years_to_expiry, dividend_yield), axis=1)
+	puts['omega'] 	= puts['delta'] * stock_price / puts['ask']
+	puts['gamma'] 	= puts.apply(lambda x: gamma(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
+	puts['theta'] 	= puts.apply(lambda x: theta_put(x['d1'], x['d2'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
+	puts['vega'] 	= puts.apply(lambda x: vega(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
+	puts['rho'] 	= puts.apply(lambda x: rho_put(x['d2'], x['strike'], years_to_expiry, risk_free_rate), axis=1)
+	puts['iprob'] 	= puts.apply(lambda x: ImpliedProbabilityPut(x['d2']), axis=1)
+	puts['ivolBid'] 	= puts.apply(lambda x: ImpliedVolatilityPut(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['bid']), axis = 1)
+	puts['d1Bid'] 		= puts.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolBid']), axis=1)
+	puts['d2Bid'] 		= puts.apply(lambda x: d2(x['d1Bid'], years_to_expiry, x['ivolBid']), axis=1)
+	puts['iprobBid'] 	= puts.apply(lambda x: ImpliedProbabilityPut(x['d2Bid']), axis=1)
+	puts['ivolAsk'] 	= puts.apply(lambda x: ImpliedVolatilityPut(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ask']), axis = 1)
+	puts['d1Ask'] 		= puts.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolAsk']), axis=1)
+	puts['d2Ask'] 		= puts.apply(lambda x: d2(x['d1Ask'], years_to_expiry, x['ivolAsk']), axis=1)
+	puts['iprobAsk'] 	= puts.apply(lambda x: ImpliedProbabilityPut(x['d2Ask']), axis=1)
+	puts['intrinsic'] 	= puts.apply(lambda x:  max(x['strike'] - stock_price, 0), axis=1)
+	puts['extrinsic'] 	= puts['mark'] - puts['intrinsic']
+	puts['%TM'] 		= (puts['strike'] - stock_price) / stock_price
 
 '''
 Example option:
