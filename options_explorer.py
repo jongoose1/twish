@@ -3,13 +3,18 @@ import logging
 from colorama import Fore
 import pandas as pd
 from options import *
+import re
 
 logging.getLogger('yfinance').disabled = True
 pd.set_option('display.max_rows', None)
 pd.set_option('display.float_format', lambda x: '%.4f'%x)
+regex = re.compile('[^0-9]')
 
 risk_free_rate = get_rfr()
-columns_to_print = ['strike', 'bid', 'ask', 'omega', 'delta', 'theta', 'ivolBid', 'ivolAsk', 'iprob', '%TM', 'intrinsic', 'extrinsic']
+cols = ['bid', 'ask', 'omega', 'delta', 'theta', 'ivolBid', 'ivolAsk', 'iprob', '%TM']
+put_cols = ['strike'] + [col + '_put' for col in cols]
+call_cols = ['strike'] + [col + '_call' for col in cols]
+synthetic_cols = ['strike', 'IEST_LONG', 'C-P','IEST_SHORT', 'P-C']
 
 while(True):
 	ticker = input("Ticker or done: ").upper()
@@ -18,6 +23,7 @@ while(True):
 	quote = yf.Ticker(ticker)
 	info = quote.info
 	if 'symbol' not in info:
+		print(info)
 		print("invalid ticker")
 		continue
 	options = quote.options
@@ -39,36 +45,51 @@ while(True):
 		print("{:<3} {} ({}DTE)	CALLS/PUTS".format(i, option, int(dte_)))
 		i += 1
 
-	selection_id = input("Select: ")
-	option = options[int(selection_id) - 1]
+	input_ = input("Type the number of a chain and 'C' or 'P': ")
+	index = int(regex.sub('', input_)) - 1
+	option = options[index]
+	if 'P' in input_.upper():
+		columns_to_print = put_cols
+	else:
+		columns_to_print = call_cols
 	
 	years_to_expiry = dte(option)/365.25
 	
 	chain = quote.option_chain(option)
+	
 	add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, dividend_yield)
+	merged = chain.calls.merge(chain.puts, left_on='strike', right_on='strike', suffixes=('_call','_put'))
+	merged['C-P'] = merged['ask_call']-merged['bid_put']
+	merged['P-C'] = merged['bid_call']-merged['ask_put']
+	merged['IEST_LONG'] = merged['strike'] + merged['C-P'] / ZCB(risk_free_rate, years_to_expiry)
+	merged['IEST_SHORT'] = merged['strike'] + merged['P-C'] / ZCB(risk_free_rate, years_to_expiry)
 
 	done = False
 	while(not done):
 		print("{}{:5} ${:<7.2f} {:<+3.2f}%{}".format(color, ticker, stock_price, percent_change, Fore.RESET, dividend_yield, risk_free_rate))
 		print("Yield: {:.2f}%, Risk Free Rate {:.2f}%".format(100*dividend_yield, 100*risk_free_rate))
-		print("{} {} CALLS {}DTE".format(ticker, option, int(dte(option))))
-		print(chain.calls[columns_to_print].iloc[::-1].to_string(index=False))
-	
-		print("{}{:5} ${:<7.2f} {:<+3.2f}%{}".format(color, ticker, stock_price, percent_change, Fore.RESET, dividend_yield, risk_free_rate))
-		print("Yield: {:.2f}%, Risk Free Rate {:.2f}%".format(100*dividend_yield, 100*risk_free_rate))
-		print("{} {} PUTS {}DTE".format(ticker, option, int(dte(option))))
-		print(chain.puts[columns_to_print].iloc[::-1].to_string(index=False))
+		print("{} {} CALLS/PUTS {}DTE".format(ticker, option, int(dte(option))))
+		print(merged[columns_to_print].iloc[::-1].to_string(index=False))
 
-		for col in chain.calls.columns:
+		for col in merged.columns:
 			if col not in columns_to_print:
 				print(col, end=' ')
 		print()
-		columns_to_toggle = input("Toggle columns or done:")
+		columns_to_toggle = input("Toggle columns or put or call or synthetic or done:")
 		for col in columns_to_toggle.split():
 			if col.upper() == 'DONE':
 				done = True
 				break
-			if col in chain.calls.columns:
+			elif col.upper() == 'PUT':
+				columns_to_print = put_cols
+				break
+			elif col.upper() == 'CALL':
+				columns_to_print = call_cols
+				break
+			elif col.upper() == 'SYNTHETIC':
+				columns_to_print = synthetic_cols
+				break
+			elif col in merged.columns:
 				if col in columns_to_print:
 					columns_to_print.remove(col)
 				else:

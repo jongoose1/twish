@@ -6,6 +6,9 @@ import numpy as np
 from scipy import optimize
 from scipy.stats import norm
 
+def ZCB(risk_free_rate, years_to_expiry):
+	return (1+risk_free_rate)**(-years_to_expiry)
+
 def d1(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yield, volatility):
 	return (np.log(stock_price/strike_price) + (risk_free_rate-dividend_yield+volatility**2/2)*years_to_expiry) / (volatility*np.sqrt(years_to_expiry))
 
