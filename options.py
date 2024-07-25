@@ -88,6 +88,7 @@ def get_rfr():
 	return risk_free_rate
 
 def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, dividend_yield):
+	zcb = ZCB(risk_free_rate, years_to_expiry)
 	calls = chain.calls
 	calls['mark'] 	= (calls['bid'] + calls['ask'])/2
 	calls['spread'] = (calls['ask'] - calls['bid'])/calls['mark']
@@ -112,6 +113,17 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	calls['%TM'] 		= (calls['strike'] - stock_price) / stock_price
 	calls['intrinsic'] 	= calls.apply(lambda x: max(stock_price - x['strike'], 0), axis=1)
 	calls['extrinsic'] 	= calls['mark'] - calls['intrinsic']
+	for i in range(0, len(calls)-1):
+		#increasing strike
+		calls.loc[i, 'bid_spread'] = calls.loc[i, 'bid'] - calls.loc[i+1, 'ask']
+		calls.loc[i, 'ask_spread'] = calls.loc[i, 'ask'] - calls.loc[i+1, 'bid']
+		calls.loc[i, 'delta_spread'] = calls.loc[i, 'delta'] - calls.loc[i+1, 'delta']
+		calls.loc[i, 'theta_spread'] = calls.loc[i, 'theta'] - calls.loc[i+1, 'theta']
+		calls.loc[i, 'iprobBid_spread'] = calls.loc[i, 'bid_spread'] / ((calls.loc[i+1, 'strike'] - calls.loc[i, 'strike'])*zcb)
+		calls.loc[i, 'iprobAsk_spread'] = calls.loc[i, 'ask_spread'] / ((calls.loc[i+1, 'strike'] - calls.loc[i, 'strike'])*zcb)
+	calls.loc[len(calls), 'bid_spread'] = float('nan')
+	calls.loc[len(calls), 'ask_spread'] = float('nan')
+	calls['omega_spread'] = calls['delta_spread'] * stock_price / calls['ask_spread']
 
 	puts = chain.puts
 	puts['mark'] 	= (puts['bid'] + puts['ask'])/2
@@ -137,6 +149,16 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	puts['intrinsic'] 	= puts.apply(lambda x:  max(x['strike'] - stock_price, 0), axis=1)
 	puts['extrinsic'] 	= puts['mark'] - puts['intrinsic']
 	puts['%TM'] 		= (puts['strike'] - stock_price) / stock_price
+	puts.loc[0, 'spreadBid'] = float('nan')
+	puts.loc[0, 'spreadAsk'] = float('nan')
+	for i in range(1, len(puts)):
+		puts.loc[i, 'bid_spread'] = puts.loc[i, 'bid'] - puts.loc[i-1, 'ask']
+		puts.loc[i, 'ask_spread'] = puts.loc[i, 'ask'] - puts.loc[i-1, 'bid']
+		puts.loc[i, 'delta_spread'] = puts.loc[i, 'delta'] - puts.loc[i-1, 'delta']
+		puts.loc[i, 'theta_spread'] = puts.loc[i, 'theta'] - puts.loc[i-1, 'theta']
+		puts.loc[i, 'iprobBid_spread'] = puts.loc[i, 'bid_spread'] / ((puts.loc[i, 'strike'] - puts.loc[i-1, 'strike'])*zcb)
+		puts.loc[i, 'iprobAsk_spread'] = puts.loc[i, 'ask_spread'] / ((puts.loc[i, 'strike'] - puts.loc[i-1, 'strike'])*zcb)
+	puts['omega_spread'] = puts['delta_spread'] * stock_price / puts['ask_spread']
 
 '''
 Example option:
