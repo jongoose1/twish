@@ -101,7 +101,7 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	calls['theta'] 	= calls.apply(lambda x: theta_call(x['d1'], x['d2'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
 	calls['vega'] 	= calls.apply(lambda x: vega(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
 	calls['rho'] 	= calls.apply(lambda x: rho_call(x['d2'], x['strike'], years_to_expiry, risk_free_rate), axis=1)
-	calls['iprob'] 	= calls.apply(lambda x: ImpliedProbabilityCall(x['d2']), axis=1)
+	calls['BSM_CDF%'] 	= 100 - 100 * calls.apply(lambda x: ImpliedProbabilityCall(x['d2']), axis=1)
 	calls['ivolBid'] 	= calls.apply(lambda x: ImpliedVolatilityCall(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['bid']), axis = 1)
 	calls['d1Bid'] 		= calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolBid']), axis=1)
 	calls['d2Bid'] 		= calls.apply(lambda x: d2(x['d1Bid'], years_to_expiry, x['ivolBid']), axis=1)
@@ -110,20 +110,38 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	calls['d1Ask'] 		= calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolAsk']), axis=1)
 	calls['d2Ask'] 		= calls.apply(lambda x: d2(x['d1Ask'], years_to_expiry, x['ivolAsk']), axis=1)
 	calls['iprobAsk'] 	= calls.apply(lambda x: ImpliedProbabilityCall(x['d2Ask']), axis=1)
-	calls['%TM'] 		= (calls['strike'] - stock_price) / stock_price
+	calls['%TM'] 		= 100 * (calls['strike'] - stock_price) / stock_price
+	calls['breakeven'] 	= calls['strike'] + calls['ask']
+	calls['%BE'] 		= 100 * (calls['breakeven'] - stock_price) / stock_price
 	calls['intrinsic'] 	= calls.apply(lambda x: max(stock_price - x['strike'], 0), axis=1)
 	calls['extrinsic'] 	= calls['mark'] - calls['intrinsic']
+
+	#spread
 	for i in range(0, len(calls)-1):
 		#increasing strike
 		calls.loc[i, 'bid_spread'] = calls.loc[i, 'bid'] - calls.loc[i+1, 'ask']
 		calls.loc[i, 'ask_spread'] = calls.loc[i, 'ask'] - calls.loc[i+1, 'bid']
 		calls.loc[i, 'delta_spread'] = calls.loc[i, 'delta'] - calls.loc[i+1, 'delta']
 		calls.loc[i, 'theta_spread'] = calls.loc[i, 'theta'] - calls.loc[i+1, 'theta']
-		calls.loc[i, 'iprobBid_spread'] = calls.loc[i, 'bid_spread'] / ((calls.loc[i+1, 'strike'] - calls.loc[i, 'strike'])*zcb)
-		calls.loc[i, 'iprobAsk_spread'] = calls.loc[i, 'ask_spread'] / ((calls.loc[i+1, 'strike'] - calls.loc[i, 'strike'])*zcb)
-	calls.loc[len(calls), 'bid_spread'] = float('nan')
-	calls.loc[len(calls), 'ask_spread'] = float('nan')
+		calls.loc[i, 'width_spread'] = calls.loc[i+1, 'strike'] - calls.loc[i, 'strike']
+		calls.loc[i, 'strike_spread'] = (calls.loc[i, 'strike'] + calls.loc[i+1, 'strike']) / 2
+		calls.loc[i, 'BSM_PDF'] = (calls.loc[i+1, 'BSM_CDF%'] - calls.loc[i, 'BSM_CDF%']) / (100 * calls.loc[i, 'width_spread'])
 	calls['omega_spread'] = calls['delta_spread'] * stock_price / calls['ask_spread']
+	calls['mark_spread'] = (calls['bid_spread'] + calls['ask_spread']) / 2
+	#dC/dK = ck+h - ck / h = -spread/h
+	#cdf = 1 + dC/dK * 1/z
+	calls['DK'] = -calls['mark_spread'] / calls['width_spread'] #interpret at average of strikes. (strike_spread)
+	calls['CDF%_spread'] = 100 * (1 + calls['DK'] / zcb)
+
+	#fly
+	for i in range(0,len(calls)-2):
+		calls.loc[i, 'bid_fly'] = calls.loc[i, 'bid_spread'] - calls.loc[i+1, 'ask_spread']
+		calls.loc[i, 'ask_fly'] = calls.loc[i, 'ask_spread'] - calls.loc[i+1, 'bid_spread']
+		calls.loc[i, 'width_fly'] = calls.loc[i+1, 'strike_spread'] - calls.loc[i, 'strike_spread']
+		calls.loc[i, 'strike_fly'] = (calls.loc[i, 'strike_spread'] + calls.loc[i+1, 'strike_spread']) / 2
+		calls.loc[i, 'DK2'] = (calls.loc[i+1, 'DK'] - calls.loc[i, 'DK']) / calls.loc[i, 'width_fly']
+	calls['mark_fly'] = (calls['bid_fly'] + calls['ask_fly']) / 2
+	calls['PDF_fly'] = 100 * calls['DK2'] / zcb
 
 	puts = chain.puts
 	puts['mark'] 	= (puts['bid'] + puts['ask'])/2
@@ -137,7 +155,7 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	puts['theta'] 	= puts.apply(lambda x: theta_put(x['d1'], x['d2'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
 	puts['vega'] 	= puts.apply(lambda x: vega(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
 	puts['rho'] 	= puts.apply(lambda x: rho_put(x['d2'], x['strike'], years_to_expiry, risk_free_rate), axis=1)
-	puts['iprob'] 	= puts.apply(lambda x: ImpliedProbabilityPut(x['d2']), axis=1)
+	puts['BSM_CDF%'] 	= 100 * puts.apply(lambda x: ImpliedProbabilityPut(x['d2']), axis=1)
 	puts['ivolBid'] 	= puts.apply(lambda x: ImpliedVolatilityPut(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['bid']), axis = 1)
 	puts['d1Bid'] 		= puts.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolBid']), axis=1)
 	puts['d2Bid'] 		= puts.apply(lambda x: d2(x['d1Bid'], years_to_expiry, x['ivolBid']), axis=1)
@@ -148,17 +166,36 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	puts['iprobAsk'] 	= puts.apply(lambda x: ImpliedProbabilityPut(x['d2Ask']), axis=1)
 	puts['intrinsic'] 	= puts.apply(lambda x:  max(x['strike'] - stock_price, 0), axis=1)
 	puts['extrinsic'] 	= puts['mark'] - puts['intrinsic']
-	puts['%TM'] 		= (puts['strike'] - stock_price) / stock_price
-	puts.loc[0, 'spreadBid'] = float('nan')
-	puts.loc[0, 'spreadAsk'] = float('nan')
+	puts['%TM'] 		= 100 * (puts['strike'] - stock_price) / stock_price
+	puts['breakeven'] 	= puts['strike'] - puts['ask']
+	puts['%BE'] 		= 100 * (puts['breakeven'] - stock_price) / stock_price
+
+	#spread
 	for i in range(1, len(puts)):
 		puts.loc[i, 'bid_spread'] = puts.loc[i, 'bid'] - puts.loc[i-1, 'ask']
 		puts.loc[i, 'ask_spread'] = puts.loc[i, 'ask'] - puts.loc[i-1, 'bid']
 		puts.loc[i, 'delta_spread'] = puts.loc[i, 'delta'] - puts.loc[i-1, 'delta']
 		puts.loc[i, 'theta_spread'] = puts.loc[i, 'theta'] - puts.loc[i-1, 'theta']
-		puts.loc[i, 'iprobBid_spread'] = puts.loc[i, 'bid_spread'] / ((puts.loc[i, 'strike'] - puts.loc[i-1, 'strike'])*zcb)
-		puts.loc[i, 'iprobAsk_spread'] = puts.loc[i, 'ask_spread'] / ((puts.loc[i, 'strike'] - puts.loc[i-1, 'strike'])*zcb)
+		puts.loc[i, 'width_spread'] = puts.loc[i, 'strike'] - puts.loc[i-1, 'strike']
+		puts.loc[i, 'strike_spread'] = (puts.loc[i, 'strike'] + puts.loc[i-1, 'strike']) / 2
+		puts.loc[i, 'BSM_PDF'] = (calls.loc[i, 'BSM_CDF%'] - calls.loc[i-1, 'BSM_CDF%']) / (100 * puts.loc[i, 'width_spread'])
 	puts['omega_spread'] = puts['delta_spread'] * stock_price / puts['ask_spread']
+	puts['mark_spread'] = (puts['bid_spread'] + puts['ask_spread']) / 2
+	#dP/dK = pk - pk-h / h = spread/h
+	#cdf = dP/dK * 1/z
+	puts['DK'] = puts['mark_spread'] / puts['width_spread'] #interpret at average of strikes. (strike_spread)
+	puts['CDF%_spread'] = 100 * puts['DK'] / zcb
+
+	#fly
+	for i in range(2,len(puts)):
+		puts.loc[i, 'bid_fly'] = puts.loc[i, 'bid_spread'] - puts.loc[i-1, 'ask_spread']
+		puts.loc[i, 'ask_fly'] = puts.loc[i, 'ask_spread'] - puts.loc[i-1, 'bid_spread']
+		puts.loc[i, 'width_fly'] = puts.loc[i, 'strike_spread'] - puts.loc[i-1, 'strike_spread']
+		puts.loc[i, 'strike_fly'] = (puts.loc[i, 'strike_spread'] + puts.loc[i-1, 'strike_spread']) / 2
+		puts.loc[i, 'DK2'] = (puts.loc[i, 'DK'] - puts.loc[i-1, 'DK']) / puts.loc[i, 'width_fly']
+	puts['mark_fly'] = (puts['bid_fly'] + puts['ask_fly']) / 2
+	puts['PDF_fly'] = 100 * puts['DK2'] / zcb
+
 
 '''
 Example option:

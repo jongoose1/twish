@@ -11,14 +11,18 @@ pd.set_option('display.float_format', lambda x: '%.4f'%x)
 regex = re.compile('[^0-9]')
 
 risk_free_rate = get_rfr()
-cols = ['bid', 'ask', 'omega', 'delta', 'theta', 'ivolBid', 'ivolAsk', 'iprob', '%TM']
+cols = ['bid', 'ask', 'omega', 'delta', 'theta', 'ivolBid', 'ivolAsk', 'BSM_CDF%', 'BSM_PDF', '%TM', 'breakeven', '%BE']
 put_cols = ['strike'] + [col + '_put' for col in cols]
 call_cols = ['strike'] + [col + '_call' for col in cols]
 synthetic_cols = ['strike', 'IEST_LONG', 'C-P','IEST_SHORT', 'P-C']
 
-spread_cols = ['bid', 'ask', 'omega', 'delta', 'theta', 'iprobBid', 'iprobAsk']
-call_spread_cols = ['strike'] + [col+'_spread_call' for col in spread_cols] 
+spread_cols = ['strike', 'bid', 'mark','ask', 'omega', 'delta', 'theta', 'CDF%']
+call_spread_cols = ['strike'] + [col+'_spread_call' for col in spread_cols]
 put_spread_cols = ['strike'] + [col+'_spread_put' for col in spread_cols]
+
+fly_cols = ['strike', 'bid', 'mark', 'ask', 'PDF']
+call_fly_cols = ['strike'] + [col+'_fly_call' for col in fly_cols]
+put_fly_cols = ['strike'] + [col+'_fly_put' for col in fly_cols]
 
 while(True):
 	ticker = input("Ticker or done: ").upper()
@@ -81,7 +85,7 @@ while(True):
 			if col not in columns_to_print:
 				print(col, end=' ')
 		print()
-		columns_to_toggle = input("Toggle columns or put or call or synthetic or cspread or pspread or done:")
+		columns_to_toggle = input("Toggle columns or put or call or synthetic or (c/p)(spread/fly) or done:")
 		for col in columns_to_toggle.split():
 			if col.upper() == 'DONE':
 				done = True
@@ -104,6 +108,14 @@ while(True):
 			elif col.upper() == 'PSPREAD':
 				print("PUT SPREAD, 1 Strike Wide, 'strike' indicates long strike")
 				columns_to_print = put_spread_cols
+				break
+			elif col.upper() == 'PFLY':
+				print("PUT FLY, 1 Strike Wide, 'strike' indicates most expensive long strike")
+				columns_to_print = put_fly_cols
+				break
+			elif col.upper() == 'CFLY':
+				print("CALL FLY, 1 Strike Wide, 'strike' indicates most expensive long strike")
+				columns_to_print = call_fly_cols
 				break
 			elif col in merged.columns:
 				if col in columns_to_print:
