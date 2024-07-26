@@ -22,11 +22,11 @@ for i in range(1, len(data)):
 data.plot(y = 'percent_change')
 plt.figure(2)
 num_bins = 150
-actuals, bins_lefts, patches = plt.hist(data['percent_change'], bins=num_bins)
+actuals, bin_lefts, patches = plt.hist(data['percent_change'], bins=num_bins)
 xmin, xmax = plt.xlim()
 #x = np.linspace(xmin, xmax, num_bins)
 bin_width = (xmax-xmin)/num_bins
-bin_centers = [bin_left+bin_width/2 for bin_left in bins_lefts]
+bin_centers = [bin_left+bin_width/2 for bin_left in bin_lefts]
 
 #normal fit
 mu, std = stats.norm.fit(data['percent_change'])
@@ -57,5 +57,5 @@ print("\n".join("{:>+6.2f}% {:>6} {:>8.3f} {:>8.3f} {:>8.3f}"
 	for bin_center, actual, t, cauchy, normal
 	in zip(bin_centers, actuals, ts, cauchies, normals)))
 
-plt.show()
+#plt.show()
 
