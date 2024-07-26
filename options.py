@@ -5,15 +5,45 @@ import time
 import numpy as np
 from scipy import optimize
 from scipy.stats import norm
+import statistics
+import pandas_market_calendars as mcal
+import pandas as pd
 
 def ZCB(risk_free_rate, years_to_expiry):
 	return (1+risk_free_rate)**(-years_to_expiry)
+
+def LTM_signal(bid, ask, ltm):
+	if ltm > ask:
+		return 'BUY'
+	elif ltm < bid:
+		return 'SELL'
+	else:
+		return 'HOLD'
 
 def d1(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yield, volatility):
 	return (np.log(stock_price/strike_price) + (risk_free_rate-dividend_yield+volatility**2/2)*years_to_expiry) / (volatility*np.sqrt(years_to_expiry))
 
 def d2(d_1, years_to_expiry, volatility):
 	return d_1 - volatility * np.sqrt(years_to_expiry)
+
+def ltm_final_prices(initial_price, nu,mu,tau,tdte_, trials):
+	tdte_ = int(tdte_)
+	final_prices = []
+	for x in range(trials):
+		price = initial_price
+		for i in range(tdte_):
+			percent_change = mu+tau*np.random.standard_t(nu)
+			price = price * (1 + percent_change/100)
+		final_prices.append(price)
+	return final_prices
+
+def LTM_CALL(final_prices, strike_price, zcb):
+	payouts = [max(final_price-strike_price, 0) for final_price in final_prices]
+	return statistics.fmean(payouts) * zcb
+
+def LTM_PUT(final_prices, strike_price, zcb):
+	payouts = [min(max(strike_price-final_price,0), strike_price) for final_price in final_prices]
+	return statistics.fmean(payouts) * zcb
 
 def BSM_CALL(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yield, volatility):
 	if volatility == 0:
@@ -79,6 +109,18 @@ def dte(option):
 	# option str %Y-%m-%d
 	return (datetime.datetime.strptime(option, "%Y-%m-%d").replace(hour=16, tzinfo=ZoneInfo('America/New_York')).timestamp() - time.time()) / 86400
 
+today_str = datetime.date.today().strftime("%Y-%m-%d")
+cal = mcal.get_calendar("NYSE")
+def tdte(option):
+	# option str %Y-%m-%d
+	bdi = mcal.date_range(cal.schedule(start_date = today_str, end_date = option), frequency = '1D')
+	bdi = bdi.normalize()
+	s = pd.Series(data = 1, index = bdi)
+	cdi = pd.date_range(start = bdi.min(),end = bdi.max())
+	s = s.reindex(index = cdi).fillna(0).astype(int).cumsum()
+	return s[option] - s[today_str]
+	
+
 def get_rfr():
 	try:
 		risk_free_rate = yf.Ticker("^IRX").info['dayLow']/100
@@ -87,8 +129,9 @@ def get_rfr():
 		risk_free_rate = 0.05
 	return risk_free_rate
 
-def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, dividend_yield):
+def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, dividend_yield, nu, mu, tau, trials, tdte_):
 	zcb = ZCB(risk_free_rate, years_to_expiry)
+	final_prices = ltm_final_prices(stock_price, nu, mu, tau, tdte_, trials)
 	calls = chain.calls
 	calls['mark'] 	= (calls['bid'] + calls['ask'])/2
 	calls['spread'] = (calls['ask'] - calls['bid'])/calls['mark']
@@ -115,6 +158,10 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	calls['%BE'] 		= 100 * (calls['breakeven'] - stock_price) / stock_price
 	calls['intrinsic'] 	= calls.apply(lambda x: max(stock_price - x['strike'], 0), axis=1)
 	calls['extrinsic'] 	= calls['mark'] - calls['intrinsic']
+
+	calls['LTM']		= calls.apply(lambda x: LTM_CALL(final_prices, x['strike'], zcb), axis=1)
+	calls['LTM_signal'] = calls.apply(lambda x: LTM_signal(x['bid'], x['ask'], x['LTM']), axis=1)
+	calls['Markup%']	= 100 * (calls['ask'] - calls['LTM']) /  calls['LTM']
 
 	#spread
 	for i in range(0, len(calls)-1):
@@ -169,6 +216,10 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	puts['%TM'] 		= 100 * (puts['strike'] - stock_price) / stock_price
 	puts['breakeven'] 	= puts['strike'] - puts['ask']
 	puts['%BE'] 		= 100 * (puts['breakeven'] - stock_price) / stock_price
+	
+	puts['LTM']			= puts.apply(lambda x: LTM_PUT(final_prices, x['strike'], zcb), axis=1)
+	puts['LTM_signal']  = puts.apply(lambda x: LTM_signal(x['bid'], x['ask'], x['LTM']), axis=1)
+	puts['Markup%']	= 100 * (puts['ask'] - puts['LTM']) /  puts['LTM']
 
 	#spread
 	for i in range(1, len(puts)):
@@ -178,7 +229,7 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 		puts.loc[i, 'theta_spread'] = puts.loc[i, 'theta'] - puts.loc[i-1, 'theta']
 		puts.loc[i, 'width_spread'] = puts.loc[i, 'strike'] - puts.loc[i-1, 'strike']
 		puts.loc[i, 'strike_spread'] = (puts.loc[i, 'strike'] + puts.loc[i-1, 'strike']) / 2
-		puts.loc[i, 'BSM_PDF'] = (calls.loc[i, 'BSM_CDF%'] - calls.loc[i-1, 'BSM_CDF%']) / (100 * puts.loc[i, 'width_spread'])
+		puts.loc[i, 'BSM_PDF'] = (puts.loc[i, 'BSM_CDF%'] - puts.loc[i-1, 'BSM_CDF%']) / (100 * puts.loc[i, 'width_spread'])
 	puts['omega_spread'] = puts['delta_spread'] * stock_price / puts['ask_spread']
 	puts['mark_spread'] = (puts['bid_spread'] + puts['ask_spread']) / 2
 	#dP/dK = pk - pk-h / h = spread/h
