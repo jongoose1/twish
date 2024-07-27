@@ -6,6 +6,7 @@ import pandas as pd
 import yfinance as yf
 import sys
 from scipy import stats
+from time import sleep
 
 uppers = [arg.upper() for arg in sys.argv]
 if 'NOPLOT' not in uppers:
@@ -51,3 +52,4 @@ while True:
 		plt.clf()
 		plt.plot(prices)
 		plt.pause(0.1)
+	sleep(0.1)

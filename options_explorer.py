@@ -25,9 +25,9 @@ fly_cols = ['strike', 'bid', 'mark', 'ask', 'PDF']
 call_fly_cols = ['strike'] + [col+'_fly_call' for col in fly_cols]
 put_fly_cols = ['strike'] + [col+'_fly_put' for col in fly_cols]
 
-ltm_cols = ['bid', 'ask', 'LTM', 'LTM_signal', 'Markup%']
-ltm_cols = ['strike'] + [col+'_call' for col in ltm_cols] + [col+'_put' for col in ltm_cols]
-
+ltm_cols = ['bid', 'ask', 'LTM', 'LTM_signal', 'Markup%', 'Kelly%', 'P(gain)%', 'LTM_CDF%']
+call_ltm_cols = ['strike'] + [col+'_call' for col in ltm_cols]
+put_ltm_cols = ['strike'] + [col+'_put' for col in ltm_cols]
 while(True):
 	ticker = input("Ticker or done: ").upper()
 	if ticker == "DONE":
@@ -108,7 +108,7 @@ while(True):
 			if col not in columns_to_print:
 				print(col, end=' ')
 		print()
-		columns_to_toggle = input("Toggle columns or put or call or synthetic or (c/p)(spread/fly) or done:")
+		columns_to_toggle = input("Toggle columns or put or call or synthetic or (c/p)(spread/fly/ltm) or done:")
 		for col in columns_to_toggle.split():
 			if col.upper() == 'DONE':
 				done = True
@@ -140,9 +140,13 @@ while(True):
 				print("CALL FLY, 1 Strike Wide, 'strike' indicates most expensive long strike")
 				columns_to_print = call_fly_cols
 				break
-			elif col.upper() == 'LTM':
-				print('LTM')
-				columns_to_print = ltm_cols
+			elif col.upper() == 'CLTM':
+				print('CLTM')
+				columns_to_print = call_ltm_cols
+				break
+			elif col.upper() == 'PLTM':
+				print('PLTM')
+				columns_to_print = put_ltm_cols
 				break
 			elif col in merged.columns:
 				if col in columns_to_print:

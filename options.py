@@ -13,6 +13,8 @@ def ZCB(risk_free_rate, years_to_expiry):
 	return (1+risk_free_rate)**(-years_to_expiry)
 
 def LTM_signal(bid, ask, ltm):
+	if ask == 0:
+		return 'N/A'
 	if ltm > ask:
 		return 'BUY'
 	elif ltm < bid:
@@ -44,6 +46,45 @@ def LTM_CALL(final_prices, strike_price, zcb):
 def LTM_PUT(final_prices, strike_price, zcb):
 	payouts = [min(max(strike_price-final_price,0), strike_price) for final_price in final_prices]
 	return statistics.fmean(payouts) * zcb
+
+def ltm_cdf(final_prices, price):
+	#p (price < final_price)
+	return sum(1 for x in final_prices if x < price) / len(final_prices)
+
+def ltm_p_gain_call(final_prices, strike, cost):
+	return sum(1 for x in final_prices if x > strike+cost) / len(final_prices)
+
+def ltm_kelly_call(final_prices, strike, cost):
+	if cost == 0:
+		return float('nan')
+	breakeven = strike + cost
+	# p = p(gain)
+	p = sum(1 for x in final_prices if x > breakeven) / len(final_prices)
+	#q = 1 - p
+	q = 1 - p
+	#g = fraction gained on positive outcome
+	g = statistics.fmean([(x-breakeven)/cost for x in final_prices if x > breakeven])
+	#l = fraction that is lost on negative outcome
+	l = statistics.fmean([(cost - max(x-strike, 0))/cost for x in final_prices if x < breakeven])
+	return p/l - q/g
+
+def ltm_p_gain_put(final_prices, strike, cost):
+	return sum(1 for x in final_prices if x < strike-cost) / len(final_prices)
+
+def ltm_kelly_put(final_prices, strike, cost):
+	if cost == 0:
+		return float('nan')
+	breakeven = strike - cost
+	# p = p(gain)
+	p = sum(1 for x in final_prices if x < breakeven) / len(final_prices)
+	#q = 1 - p
+	q = 1 - p
+	#g = fraction gained on positive outcome
+	g = statistics.fmean([(min(max(strike-x,0),strike)-cost)/cost for x in final_prices if x < breakeven])
+	#l = fraction that is lost on negative outcome
+	l = statistics.fmean([(cost - max(strike-x, 0))/cost for x in final_prices if x > breakeven])
+	return p/l - q/g
+
 
 def BSM_CALL(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yield, volatility):
 	if volatility == 0:
@@ -159,9 +200,13 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	calls['intrinsic'] 	= calls.apply(lambda x: max(stock_price - x['strike'], 0), axis=1)
 	calls['extrinsic'] 	= calls['mark'] - calls['intrinsic']
 
+	#LTM
 	calls['LTM']		= calls.apply(lambda x: LTM_CALL(final_prices, x['strike'], zcb), axis=1)
 	calls['LTM_signal'] = calls.apply(lambda x: LTM_signal(x['bid'], x['ask'], x['LTM']), axis=1)
 	calls['Markup%']	= 100 * (calls['ask'] - calls['LTM']) /  calls['LTM']
+	calls['Kelly%'] 	= calls.apply(lambda x: 100*ltm_kelly_call(final_prices, x['strike'], x['ask']), axis=1)
+	calls['P(gain)%'] 	= calls.apply(lambda x: 100*ltm_p_gain_call(final_prices, x['strike'], x['ask']), axis=1)
+	calls['LTM_CDF%']	= calls.apply(lambda x: 100*ltm_cdf(final_prices, x['strike']), axis=1)
 
 	#spread
 	for i in range(0, len(calls)-1):
@@ -217,9 +262,14 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	puts['breakeven'] 	= puts['strike'] - puts['ask']
 	puts['%BE'] 		= 100 * (puts['breakeven'] - stock_price) / stock_price
 	
+	#LTM
 	puts['LTM']			= puts.apply(lambda x: LTM_PUT(final_prices, x['strike'], zcb), axis=1)
 	puts['LTM_signal']  = puts.apply(lambda x: LTM_signal(x['bid'], x['ask'], x['LTM']), axis=1)
-	puts['Markup%']	= 100 * (puts['ask'] - puts['LTM']) /  puts['LTM']
+	puts['Markup%']		= 100 * (puts['ask'] - puts['LTM']) /  puts['LTM']
+	puts['Kelly%'] 		= puts.apply(lambda x: 100*ltm_kelly_put(final_prices, x['strike'], x['ask']), axis=1)
+	puts['P(gain)%'] 	= puts.apply(lambda x: 100*ltm_p_gain_put(final_prices, x['strike'], x['ask']), axis=1)
+	puts['LTM_CDF%']	= puts.apply(lambda x: 100*ltm_cdf(final_prices, x['strike']), axis=1)
+
 
 	#spread
 	for i in range(1, len(puts)):
