@@ -27,6 +27,24 @@ def LTM_signal(bid, ask, ltm):
 		return 'SELL'
 	return 'HOLD'
 
+def get_t_fit(ticker):
+	#load/download historical prices
+	try:
+		data = pd.read_pickle(ticker+'.pkl')
+		print("Previous historical data found")
+	except:
+		data = yf.download(ticker, period = 'max')
+		if data.empty:
+			print("could now download historical data")
+			return False, 0, 0, 0
+		data.to_pickle(ticker+'.pkl')
+	data = data.reset_index()
+	data.loc[0, 'percent_change'] = 0
+	for i in range(1, len(data)):
+		data.loc[i, 'percent_change'] = 100* (data.loc[i, 'Close'] - data.loc[i-1, 'Close']) / data.loc[i-1, 'Close']
+	nu, mu, tau = t.fit(data['percent_change'])
+	return True, nu, mu, tau
+
 def p_ruin(nu,mu,tau, days=1):
 	# probability of ruin after days days
 	# = 1 - probability(survival)

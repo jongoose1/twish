@@ -24,25 +24,21 @@ while(True):
 		print("invalid ticker")
 		continue
 	
-	#load/download historical prices
-	try:
-		data = pd.read_pickle(ticker+'.pkl')
-		print("Previous historical data found")
-	except:
-		data = yf.download(ticker, period = 'max')
-		if data.empty:
-			print("could now download historical data")
-			continue
-		data.to_pickle(ticker+'.pkl')
+	fit = False
+	while (not fit):
+		sub = input("substitue t fit? (y/n/manual): ").upper()
+		if sub == 'Y' or sub=='YES':
+			new_ticker = input("substitue ticker: ")
+			fit, df, loc, scale = get_t_fit(new_ticker)
+		elif sub == 'M' or sub == 'MANUAL':
+			fit = True
+			df = float(input("NU/DF: "))
+			loc = float(input("MU/LOC: "))
+			scale = float(input("TAU/SCALE: "))
+		else:
+			fit, df, loc, scale = get_t_fit(ticker)
+	
 	max_tdte = int(input("max tdte:"))
-	data = data.reset_index()
-	data.loc[0, 'percent_change'] = 0
-	for i in range(1, len(data)):
-		data.loc[i, 'percent_change'] = 100* (data.loc[i, 'Close'] - data.loc[i-1, 'Close']) / data.loc[i-1, 'Close']
-	
-	#t fit
-	df, loc, scale = stats.t.fit(data['percent_change'])
-	
 	options = quote.options
 	stock_price = (info['bid'] + info['ask']) / 2 
 	percent_change =100 * (stock_price - info['previousClose'])/ info['previousClose']
