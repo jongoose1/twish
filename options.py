@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 import time
 import numpy as np
 from scipy import optimize
-from scipy.stats import norm
+from scipy.stats import norm, t
 import statistics
 import pandas_market_calendars as mcal
 import pandas as pd
@@ -12,15 +12,33 @@ import pandas as pd
 def ZCB(risk_free_rate, years_to_expiry):
 	return (1+risk_free_rate)**(-years_to_expiry)
 
+def annualize(rate, days):
+	return (1 + rate)**(252/days) - 1
+
+def diemize(rate, days):
+	return (1 + rate)**(1/days) - 1
+
 def LTM_signal(bid, ask, ltm):
 	if ask == 0:
 		return 'N/A'
 	if ltm > ask:
 		return 'BUY'
-	elif ltm < bid:
+	if ltm < bid:
 		return 'SELL'
-	else:
-		return 'HOLD'
+	return 'HOLD'
+
+def p_ruin(nu,mu,tau, days=1):
+	# probability of ruin after days days
+	# = 1 - probability(survival)
+	p = t.cdf(-100, nu, mu, tau)
+	return 1 - (1 - p)**days
+
+def kelly_stock(nu, mu, tau):
+	p = 1 - t.cdf(0,nu,mu,tau)
+	q = 1 - p
+	g = t.expect(lambda x: x/100, (nu,), mu, tau, lb=0, conditional=True)
+	l = t.expect(lambda x: -max(x,-100)/100, (nu,), mu, tau, ub=0, conditional=True)
+	return p/l - q/g
 
 def d1(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yield, volatility):
 	return (np.log(stock_price/strike_price) + (risk_free_rate-dividend_yield+volatility**2/2)*years_to_expiry) / (volatility*np.sqrt(years_to_expiry))
@@ -66,7 +84,7 @@ def ltm_kelly_call(final_prices, strike, cost):
 	g = statistics.fmean([(x-breakeven)/cost for x in final_prices if x > breakeven])
 	#l = fraction that is lost on negative outcome
 	l = statistics.fmean([(cost - max(x-strike, 0))/cost for x in final_prices if x < breakeven])
-	return p/l - q/g
+	return min(p/l - q/g, 1)
 
 def ltm_p_gain_put(final_prices, strike, cost):
 	return sum(1 for x in final_prices if x < strike-cost) / len(final_prices)
@@ -83,7 +101,7 @@ def ltm_kelly_put(final_prices, strike, cost):
 	g = statistics.fmean([(min(max(strike-x,0),strike)-cost)/cost for x in final_prices if x < breakeven])
 	#l = fraction that is lost on negative outcome
 	l = statistics.fmean([(cost - max(strike-x, 0))/cost for x in final_prices if x > breakeven])
-	return p/l - q/g
+	return min(p/l - q/g, 1)
 
 
 def BSM_CALL(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yield, volatility):
@@ -151,16 +169,16 @@ def dte(option):
 	return (datetime.datetime.strptime(option, "%Y-%m-%d").replace(hour=16, tzinfo=ZoneInfo('America/New_York')).timestamp() - time.time()) / 86400
 
 today_str = datetime.date.today().strftime("%Y-%m-%d")
+far_future_str = (datetime.date.today() + datetime.timedelta(days=1825)).strftime("%Y-%m-%d")
 cal = mcal.get_calendar("NYSE")
+bdi = mcal.date_range(cal.schedule(start_date = today_str, end_date = far_future_str), frequency = '1D')
+bdi = bdi.normalize()
+s = pd.Series(data = 1, index = bdi)
+cdi = pd.date_range(start = bdi.min(),end = bdi.max())
+s = s.reindex(index = cdi).fillna(0).astype(int).cumsum()
 def tdte(option):
 	# option str %Y-%m-%d
-	bdi = mcal.date_range(cal.schedule(start_date = today_str, end_date = option), frequency = '1D')
-	bdi = bdi.normalize()
-	s = pd.Series(data = 1, index = bdi)
-	cdi = pd.date_range(start = bdi.min(),end = bdi.max())
-	s = s.reindex(index = cdi).fillna(0).astype(int).cumsum()
-	return s[option] - s[today_str]
-	
+	return s[option]
 
 def get_rfr():
 	try:
@@ -172,6 +190,7 @@ def get_rfr():
 
 def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, dividend_yield, nu, mu, tau, trials, tdte_):
 	zcb = ZCB(risk_free_rate, years_to_expiry)
+	rfg = 1 / zcb - 1
 	final_prices = ltm_final_prices(stock_price, nu, mu, tau, tdte_, trials)
 	calls = chain.calls
 	calls['mark'] 	= (calls['bid'] + calls['ask'])/2
@@ -202,11 +221,18 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 
 	#LTM
 	calls['LTM']		= calls.apply(lambda x: LTM_CALL(final_prices, x['strike'], zcb), axis=1)
+	calls['LTM_payout'] = calls['LTM'] / zcb
+	calls['LTM_E']		= calls['LTM_payout'] - calls['ask']
+	calls['LTM_E%']		= 100 * calls['LTM_E'] / calls['ask']
 	calls['LTM_signal'] = calls.apply(lambda x: LTM_signal(x['bid'], x['ask'], x['LTM']), axis=1)
 	calls['Markup%']	= 100 * (calls['ask'] - calls['LTM']) /  calls['LTM']
-	calls['Kelly%'] 	= calls.apply(lambda x: 100*ltm_kelly_call(final_prices, x['strike'], x['ask']), axis=1)
+	calls['Kelly'] 	= calls.apply(lambda x: ltm_kelly_call(final_prices, x['strike'], x['ask']), axis=1)
+	calls['Kelly%'] 	= 100 * calls['Kelly']
 	calls['P(gain)%'] 	= calls.apply(lambda x: 100*ltm_p_gain_call(final_prices, x['strike'], x['ask']), axis=1)
 	calls['LTM_CDF%']	= calls.apply(lambda x: 100*ltm_cdf(final_prices, x['strike']), axis=1)
+	calls['LTM_KE%']	= calls.apply(lambda x: max(x['LTM_E%'], 0)*max(x['Kelly'], 0), axis=1) #ignore negative*negative values for now
+	calls['LTM_KG%']	= calls['LTM_KE%'] + 100 * (1 - calls['Kelly']) * rfg
+	calls['LTM_KGD%']	= calls.apply(lambda x: 100 * diemize(x['LTM_KG%']/100, tdte_), axis=1)
 
 	#spread
 	for i in range(0, len(calls)-1):
@@ -264,13 +290,19 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	
 	#LTM
 	puts['LTM']			= puts.apply(lambda x: LTM_PUT(final_prices, x['strike'], zcb), axis=1)
+	puts['LTM_payout'] 	= puts['LTM'] / zcb
+	puts['LTM_E']		= puts['LTM_payout'] - puts['ask']
+	puts['LTM_E%']		= 100 * puts['LTM_E'] / puts['ask']
 	puts['LTM_signal']  = puts.apply(lambda x: LTM_signal(x['bid'], x['ask'], x['LTM']), axis=1)
 	puts['Markup%']		= 100 * (puts['ask'] - puts['LTM']) /  puts['LTM']
-	puts['Kelly%'] 		= puts.apply(lambda x: 100*ltm_kelly_put(final_prices, x['strike'], x['ask']), axis=1)
+	puts['Kelly'] 		= puts.apply(lambda x: ltm_kelly_put(final_prices, x['strike'], x['ask']), axis=1)
+	puts['Kelly%'] 		= 100 * puts['Kelly']
 	puts['P(gain)%'] 	= puts.apply(lambda x: 100*ltm_p_gain_put(final_prices, x['strike'], x['ask']), axis=1)
 	puts['LTM_CDF%']	= puts.apply(lambda x: 100*ltm_cdf(final_prices, x['strike']), axis=1)
-
-
+	puts['LTM_KE%']		= puts.apply(lambda x: max(x['LTM_E%'], 0)*max(x['Kelly'], 0), axis=1) #ignore negative*negative values for now
+	puts['LTM_KG%']		= puts['LTM_KE%'] + 100 * (1 - puts['Kelly']) * rfg
+	puts['LTM_KGD%']	= puts.apply(lambda x: 100 * diemize(x['LTM_KG%']/100, tdte_), axis=1)
+	
 	#spread
 	for i in range(1, len(puts)):
 		puts.loc[i, 'bid_spread'] = puts.loc[i, 'bid'] - puts.loc[i-1, 'ask']
