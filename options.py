@@ -46,16 +46,14 @@ def d1(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yiel
 def d2(d_1, years_to_expiry, volatility):
 	return d_1 - volatility * np.sqrt(years_to_expiry)
 
+def ltm_next_prices(initial_prices, nu, mu, tau, additional_days):
+	for x in range(additional_days):
+		initial_prices = [price*(1+(mu+tau*np.random.standard_t(nu))/100) for price in initial_prices]
+	return initial_prices
+
 def ltm_final_prices(initial_price, nu,mu,tau,tdte_, trials):
-	tdte_ = int(tdte_)
-	final_prices = []
-	for x in range(trials):
-		price = initial_price
-		for i in range(tdte_):
-			percent_change = mu+tau*np.random.standard_t(nu)
-			price = price * (1 + percent_change/100)
-		final_prices.append(price)
-	return final_prices
+	final_prices = [initial_price] * trials
+	return ltm_next_prices(final_prices, nu, mu, tau, tdte_)
 
 def LTM_CALL(final_prices, strike_price, zcb):
 	payouts = [max(final_price-strike_price, 0) for final_price in final_prices]
@@ -80,6 +78,10 @@ def ltm_kelly_call(final_prices, strike, cost):
 	p = sum(1 for x in final_prices if x > breakeven) / len(final_prices)
 	#q = 1 - p
 	q = 1 - p
+	if (p == 0):
+		return 0
+	if (q == 0):
+		return 1
 	#g = fraction gained on positive outcome
 	g = statistics.fmean([(x-breakeven)/cost for x in final_prices if x > breakeven])
 	#l = fraction that is lost on negative outcome
@@ -97,6 +99,10 @@ def ltm_kelly_put(final_prices, strike, cost):
 	p = sum(1 for x in final_prices if x < breakeven) / len(final_prices)
 	#q = 1 - p
 	q = 1 - p
+	if (p == 0):
+		return 0
+	if (q == 0):
+		return 1
 	#g = fraction gained on positive outcome
 	g = statistics.fmean([(min(max(strike-x,0),strike)-cost)/cost for x in final_prices if x < breakeven])
 	#l = fraction that is lost on negative outcome
@@ -188,31 +194,33 @@ def get_rfr():
 		risk_free_rate = 0.05
 	return risk_free_rate
 
-def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, dividend_yield, nu, mu, tau, trials, tdte_):
+def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, dividend_yield, nu, mu, tau, trials, tdte_, final_prices = None, bsm=True, ltm=True, spread=True, fly=True):
 	zcb = ZCB(risk_free_rate, years_to_expiry)
 	rfg = 1 / zcb - 1
-	final_prices = ltm_final_prices(stock_price, nu, mu, tau, tdte_, trials)
+	if (final_prices==None):
+		final_prices = ltm_final_prices(stock_price, nu, mu, tau, tdte_, trials)
 	calls = chain.calls
 	calls['mark'] 	= (calls['bid'] + calls['ask'])/2
 	calls['spread'] = (calls['ask'] - calls['bid'])/calls['mark']
-	calls['ivol'] 	= calls.apply(lambda x: ImpliedVolatilityCall(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['mark']), axis = 1)
-	calls['d1'] 	= calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
-	calls['d2'] 	= calls.apply(lambda x: d2(x['d1'], years_to_expiry, x['ivol']), axis=1)
-	calls['delta'] 	= calls.apply(lambda x: delta_call(x['d1'], years_to_expiry, dividend_yield), axis=1)
-	calls['omega'] 	= calls['delta'] * stock_price / calls['ask']
-	calls['gamma'] 	= calls.apply(lambda x: gamma(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
-	calls['theta'] 	= calls.apply(lambda x: theta_call(x['d1'], x['d2'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
-	calls['vega'] 	= calls.apply(lambda x: vega(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
-	calls['rho'] 	= calls.apply(lambda x: rho_call(x['d2'], x['strike'], years_to_expiry, risk_free_rate), axis=1)
-	calls['BSM_CDF%'] 	= 100 - 100 * calls.apply(lambda x: ImpliedProbabilityCall(x['d2']), axis=1)
-	calls['ivolBid'] 	= calls.apply(lambda x: ImpliedVolatilityCall(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['bid']), axis = 1)
-	calls['d1Bid'] 		= calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolBid']), axis=1)
-	calls['d2Bid'] 		= calls.apply(lambda x: d2(x['d1Bid'], years_to_expiry, x['ivolBid']), axis=1)
-	calls['iprobBid'] 	= calls.apply(lambda x: ImpliedProbabilityCall(x['d2Bid']), axis=1)
-	calls['ivolAsk'] 	= calls.apply(lambda x: ImpliedVolatilityCall(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ask']), axis = 1)
-	calls['d1Ask'] 		= calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolAsk']), axis=1)
-	calls['d2Ask'] 		= calls.apply(lambda x: d2(x['d1Ask'], years_to_expiry, x['ivolAsk']), axis=1)
-	calls['iprobAsk'] 	= calls.apply(lambda x: ImpliedProbabilityCall(x['d2Ask']), axis=1)
+	if(bsm):
+		calls['ivol'] 	= calls.apply(lambda x: ImpliedVolatilityCall(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['mark']), axis = 1)
+		calls['d1'] 	= calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
+		calls['d2'] 	= calls.apply(lambda x: d2(x['d1'], years_to_expiry, x['ivol']), axis=1)
+		calls['delta'] 	= calls.apply(lambda x: delta_call(x['d1'], years_to_expiry, dividend_yield), axis=1)
+		calls['omega'] 	= calls['delta'] * stock_price / calls['ask']
+		calls['gamma'] 	= calls.apply(lambda x: gamma(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
+		calls['theta'] 	= calls.apply(lambda x: theta_call(x['d1'], x['d2'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
+		calls['vega'] 	= calls.apply(lambda x: vega(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
+		calls['rho'] 	= calls.apply(lambda x: rho_call(x['d2'], x['strike'], years_to_expiry, risk_free_rate), axis=1)
+		calls['BSM_CDF%'] 	= 100 - 100 * calls.apply(lambda x: ImpliedProbabilityCall(x['d2']), axis=1)
+		calls['ivolBid'] 	= calls.apply(lambda x: ImpliedVolatilityCall(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['bid']), axis = 1)
+		calls['d1Bid'] 		= calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolBid']), axis=1)
+		calls['d2Bid'] 		= calls.apply(lambda x: d2(x['d1Bid'], years_to_expiry, x['ivolBid']), axis=1)
+		calls['iprobBid'] 	= calls.apply(lambda x: ImpliedProbabilityCall(x['d2Bid']), axis=1)
+		calls['ivolAsk'] 	= calls.apply(lambda x: ImpliedVolatilityCall(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ask']), axis = 1)
+		calls['d1Ask'] 		= calls.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolAsk']), axis=1)
+		calls['d2Ask'] 		= calls.apply(lambda x: d2(x['d1Ask'], years_to_expiry, x['ivolAsk']), axis=1)
+		calls['iprobAsk'] 	= calls.apply(lambda x: ImpliedProbabilityCall(x['d2Ask']), axis=1)
 	calls['%TM'] 		= 100 * (calls['strike'] - stock_price) / stock_price
 	calls['breakeven'] 	= calls['strike'] + calls['ask']
 	calls['%BE'] 		= 100 * (calls['breakeven'] - stock_price) / stock_price
@@ -220,68 +228,75 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	calls['extrinsic'] 	= calls['mark'] - calls['intrinsic']
 
 	#LTM
-	calls['LTM']		= calls.apply(lambda x: LTM_CALL(final_prices, x['strike'], zcb), axis=1)
-	calls['LTM_payout'] = calls['LTM'] / zcb
-	calls['LTM_E']		= calls['LTM_payout'] - calls['ask']
-	calls['LTM_E%']		= 100 * calls['LTM_E'] / calls['ask']
-	calls['LTM_signal'] = calls.apply(lambda x: LTM_signal(x['bid'], x['ask'], x['LTM']), axis=1)
-	calls['Markup%']	= 100 * (calls['ask'] - calls['LTM']) /  calls['LTM']
-	calls['Kelly'] 	= calls.apply(lambda x: ltm_kelly_call(final_prices, x['strike'], x['ask']), axis=1)
-	calls['Kelly%'] 	= 100 * calls['Kelly']
-	calls['P(gain)%'] 	= calls.apply(lambda x: 100*ltm_p_gain_call(final_prices, x['strike'], x['ask']), axis=1)
-	calls['LTM_CDF%']	= calls.apply(lambda x: 100*ltm_cdf(final_prices, x['strike']), axis=1)
-	calls['LTM_KE%']	= calls.apply(lambda x: max(x['LTM_E%'], 0)*max(x['Kelly'], 0), axis=1) #ignore negative*negative values for now
-	calls['LTM_KG%']	= calls['LTM_KE%'] + 100 * (1 - calls['Kelly']) * rfg
-	calls['LTM_KGD%']	= calls.apply(lambda x: 100 * diemize(x['LTM_KG%']/100, tdte_), axis=1)
+	if(ltm):
+		calls['LTM']		= calls.apply(lambda x: LTM_CALL(final_prices, x['strike'], zcb), axis=1)
+		calls['LTM_payout'] = calls['LTM'] / zcb
+		calls['LTM_E']		= calls['LTM_payout'] - calls['ask']
+		calls['LTM_E%']		= 100 * calls['LTM_E'] / calls['ask']
+		calls['LTM_signal'] = calls.apply(lambda x: LTM_signal(x['bid'], x['ask'], x['LTM']), axis=1)
+		calls['Markup%']	= 100 * (calls['ask'] - calls['LTM']) /  calls['LTM']
+		calls['Kelly'] 	= calls.apply(lambda x: ltm_kelly_call(final_prices, x['strike'], x['ask']), axis=1)
+		calls['Kelly%'] 	= 100 * calls['Kelly']
+		calls['P(gain)%'] 	= calls.apply(lambda x: 100*ltm_p_gain_call(final_prices, x['strike'], x['ask']), axis=1)
+		calls['LTM_CDF%']	= calls.apply(lambda x: 100*ltm_cdf(final_prices, x['strike']), axis=1)
+		calls['LTM_KE%']	= calls.apply(lambda x: max(x['LTM_E%'], 0)*max(x['Kelly'], 0), axis=1) #ignore negative*negative values for now
+		calls['LTM_KG%']	= calls['LTM_KE%'] + 100 * (1 - calls['Kelly']) * rfg
+		calls['LTM_KGD%']	= calls.apply(lambda x: 100 * diemize(x['LTM_KG%']/100, tdte_), axis=1)
 
 	#spread
-	for i in range(0, len(calls)-1):
-		#increasing strike
-		calls.loc[i, 'bid_spread'] = calls.loc[i, 'bid'] - calls.loc[i+1, 'ask']
-		calls.loc[i, 'ask_spread'] = calls.loc[i, 'ask'] - calls.loc[i+1, 'bid']
-		calls.loc[i, 'delta_spread'] = calls.loc[i, 'delta'] - calls.loc[i+1, 'delta']
-		calls.loc[i, 'theta_spread'] = calls.loc[i, 'theta'] - calls.loc[i+1, 'theta']
-		calls.loc[i, 'width_spread'] = calls.loc[i+1, 'strike'] - calls.loc[i, 'strike']
-		calls.loc[i, 'strike_spread'] = (calls.loc[i, 'strike'] + calls.loc[i+1, 'strike']) / 2
-		calls.loc[i, 'BSM_PDF'] = (calls.loc[i+1, 'BSM_CDF%'] - calls.loc[i, 'BSM_CDF%']) / (100 * calls.loc[i, 'width_spread'])
-	calls['omega_spread'] = calls['delta_spread'] * stock_price / calls['ask_spread']
-	calls['mark_spread'] = (calls['bid_spread'] + calls['ask_spread']) / 2
-	#dC/dK = ck+h - ck / h = -spread/h
-	#cdf = 1 + dC/dK * 1/z
-	calls['DK'] = -calls['mark_spread'] / calls['width_spread'] #interpret at average of strikes. (strike_spread)
-	calls['CDF%_spread'] = 100 * (1 + calls['DK'] / zcb)
+	if(spread):
+		for i in range(0, len(calls)-1):
+			#increasing strike
+			calls.loc[i, 'bid_spread'] = calls.loc[i, 'bid'] - calls.loc[i+1, 'ask']
+			calls.loc[i, 'ask_spread'] = calls.loc[i, 'ask'] - calls.loc[i+1, 'bid']
+			if(bsm):
+				calls.loc[i, 'delta_spread'] = calls.loc[i, 'delta'] - calls.loc[i+1, 'delta']
+				calls.loc[i, 'theta_spread'] = calls.loc[i, 'theta'] - calls.loc[i+1, 'theta']
+			calls.loc[i, 'width_spread'] = calls.loc[i+1, 'strike'] - calls.loc[i, 'strike']
+			calls.loc[i, 'strike_spread'] = (calls.loc[i, 'strike'] + calls.loc[i+1, 'strike']) / 2
+			if(bsm):
+				calls.loc[i, 'BSM_PDF'] = (calls.loc[i+1, 'BSM_CDF%'] - calls.loc[i, 'BSM_CDF%']) / (100 * calls.loc[i, 'width_spread'])
+		if(bsm):
+			calls['omega_spread'] = calls['delta_spread'] * stock_price / calls['ask_spread']
+		calls['mark_spread'] = (calls['bid_spread'] + calls['ask_spread']) / 2
+		#dC/dK = ck+h - ck / h = -spread/h
+		#cdf = 1 + dC/dK * 1/z
+		calls['DK'] = -calls['mark_spread'] / calls['width_spread'] #interpret at average of strikes. (strike_spread)
+		calls['CDF%_spread'] = 100 * (1 + calls['DK'] / zcb)
 
-	#fly
-	for i in range(0,len(calls)-2):
-		calls.loc[i, 'bid_fly'] = calls.loc[i, 'bid_spread'] - calls.loc[i+1, 'ask_spread']
-		calls.loc[i, 'ask_fly'] = calls.loc[i, 'ask_spread'] - calls.loc[i+1, 'bid_spread']
-		calls.loc[i, 'width_fly'] = calls.loc[i+1, 'strike_spread'] - calls.loc[i, 'strike_spread']
-		calls.loc[i, 'strike_fly'] = (calls.loc[i, 'strike_spread'] + calls.loc[i+1, 'strike_spread']) / 2
-		calls.loc[i, 'DK2'] = (calls.loc[i+1, 'DK'] - calls.loc[i, 'DK']) / calls.loc[i, 'width_fly']
-	calls['mark_fly'] = (calls['bid_fly'] + calls['ask_fly']) / 2
-	calls['PDF_fly'] = 100 * calls['DK2'] / zcb
-
+		#fly
+		if(fly):
+			for i in range(0,len(calls)-2):
+				calls.loc[i, 'bid_fly'] = calls.loc[i, 'bid_spread'] - calls.loc[i+1, 'ask_spread']
+				calls.loc[i, 'ask_fly'] = calls.loc[i, 'ask_spread'] - calls.loc[i+1, 'bid_spread']
+				calls.loc[i, 'width_fly'] = calls.loc[i+1, 'strike_spread'] - calls.loc[i, 'strike_spread']
+				calls.loc[i, 'strike_fly'] = (calls.loc[i, 'strike_spread'] + calls.loc[i+1, 'strike_spread']) / 2
+				calls.loc[i, 'DK2'] = (calls.loc[i+1, 'DK'] - calls.loc[i, 'DK']) / calls.loc[i, 'width_fly']
+			calls['mark_fly'] = (calls['bid_fly'] + calls['ask_fly']) / 2
+			calls['PDF_fly'] = 100 * calls['DK2'] / zcb
+	
 	puts = chain.puts
 	puts['mark'] 	= (puts['bid'] + puts['ask'])/2
 	puts['spread'] 	= (puts['ask'] - puts['bid'])/puts['mark']
-	puts['ivol'] 	= puts.apply(lambda x: ImpliedVolatilityPut(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['mark']), axis = 1)
-	puts['d1'] 		= puts.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
-	puts['d2'] 		= puts.apply(lambda x: d2(x['d1'], years_to_expiry, x['ivol']), axis=1)
-	puts['delta'] 	= puts.apply(lambda x: delta_put(x['d1'], years_to_expiry, dividend_yield), axis=1)
-	puts['omega'] 	= puts['delta'] * stock_price / puts['ask']
-	puts['gamma'] 	= puts.apply(lambda x: gamma(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
-	puts['theta'] 	= puts.apply(lambda x: theta_put(x['d1'], x['d2'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
-	puts['vega'] 	= puts.apply(lambda x: vega(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
-	puts['rho'] 	= puts.apply(lambda x: rho_put(x['d2'], x['strike'], years_to_expiry, risk_free_rate), axis=1)
-	puts['BSM_CDF%'] 	= 100 * puts.apply(lambda x: ImpliedProbabilityPut(x['d2']), axis=1)
-	puts['ivolBid'] 	= puts.apply(lambda x: ImpliedVolatilityPut(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['bid']), axis = 1)
-	puts['d1Bid'] 		= puts.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolBid']), axis=1)
-	puts['d2Bid'] 		= puts.apply(lambda x: d2(x['d1Bid'], years_to_expiry, x['ivolBid']), axis=1)
-	puts['iprobBid'] 	= puts.apply(lambda x: ImpliedProbabilityPut(x['d2Bid']), axis=1)
-	puts['ivolAsk'] 	= puts.apply(lambda x: ImpliedVolatilityPut(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ask']), axis = 1)
-	puts['d1Ask'] 		= puts.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolAsk']), axis=1)
-	puts['d2Ask'] 		= puts.apply(lambda x: d2(x['d1Ask'], years_to_expiry, x['ivolAsk']), axis=1)
-	puts['iprobAsk'] 	= puts.apply(lambda x: ImpliedProbabilityPut(x['d2Ask']), axis=1)
+	if(bsm):
+		puts['ivol'] 	= puts.apply(lambda x: ImpliedVolatilityPut(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['mark']), axis = 1)
+		puts['d1'] 		= puts.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
+		puts['d2'] 		= puts.apply(lambda x: d2(x['d1'], years_to_expiry, x['ivol']), axis=1)
+		puts['delta'] 	= puts.apply(lambda x: delta_put(x['d1'], years_to_expiry, dividend_yield), axis=1)
+		puts['omega'] 	= puts['delta'] * stock_price / puts['ask']
+		puts['gamma'] 	= puts.apply(lambda x: gamma(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
+		puts['theta'] 	= puts.apply(lambda x: theta_put(x['d1'], x['d2'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivol']), axis=1)
+		puts['vega'] 	= puts.apply(lambda x: vega(x['d1'], stock_price, years_to_expiry, dividend_yield, x['ivol']), axis=1)
+		puts['rho'] 	= puts.apply(lambda x: rho_put(x['d2'], x['strike'], years_to_expiry, risk_free_rate), axis=1)
+		puts['BSM_CDF%'] 	= 100 * puts.apply(lambda x: ImpliedProbabilityPut(x['d2']), axis=1)
+		puts['ivolBid'] 	= puts.apply(lambda x: ImpliedVolatilityPut(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['bid']), axis = 1)
+		puts['d1Bid'] 		= puts.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolBid']), axis=1)
+		puts['d2Bid'] 		= puts.apply(lambda x: d2(x['d1Bid'], years_to_expiry, x['ivolBid']), axis=1)
+		puts['iprobBid'] 	= puts.apply(lambda x: ImpliedProbabilityPut(x['d2Bid']), axis=1)
+		puts['ivolAsk'] 	= puts.apply(lambda x: ImpliedVolatilityPut(x['impliedVolatility'], stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ask']), axis = 1)
+		puts['d1Ask'] 		= puts.apply(lambda x: d1(stock_price, x['strike'], years_to_expiry, risk_free_rate, dividend_yield, x['ivolAsk']), axis=1)
+		puts['d2Ask'] 		= puts.apply(lambda x: d2(x['d1Ask'], years_to_expiry, x['ivolAsk']), axis=1)
+		puts['iprobAsk'] 	= puts.apply(lambda x: ImpliedProbabilityPut(x['d2Ask']), axis=1)
 	puts['intrinsic'] 	= puts.apply(lambda x:  max(x['strike'] - stock_price, 0), axis=1)
 	puts['extrinsic'] 	= puts['mark'] - puts['intrinsic']
 	puts['%TM'] 		= 100 * (puts['strike'] - stock_price) / stock_price
@@ -289,45 +304,51 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 	puts['%BE'] 		= 100 * (puts['breakeven'] - stock_price) / stock_price
 	
 	#LTM
-	puts['LTM']			= puts.apply(lambda x: LTM_PUT(final_prices, x['strike'], zcb), axis=1)
-	puts['LTM_payout'] 	= puts['LTM'] / zcb
-	puts['LTM_E']		= puts['LTM_payout'] - puts['ask']
-	puts['LTM_E%']		= 100 * puts['LTM_E'] / puts['ask']
-	puts['LTM_signal']  = puts.apply(lambda x: LTM_signal(x['bid'], x['ask'], x['LTM']), axis=1)
-	puts['Markup%']		= 100 * (puts['ask'] - puts['LTM']) /  puts['LTM']
-	puts['Kelly'] 		= puts.apply(lambda x: ltm_kelly_put(final_prices, x['strike'], x['ask']), axis=1)
-	puts['Kelly%'] 		= 100 * puts['Kelly']
-	puts['P(gain)%'] 	= puts.apply(lambda x: 100*ltm_p_gain_put(final_prices, x['strike'], x['ask']), axis=1)
-	puts['LTM_CDF%']	= puts.apply(lambda x: 100*ltm_cdf(final_prices, x['strike']), axis=1)
-	puts['LTM_KE%']		= puts.apply(lambda x: max(x['LTM_E%'], 0)*max(x['Kelly'], 0), axis=1) #ignore negative*negative values for now
-	puts['LTM_KG%']		= puts['LTM_KE%'] + 100 * (1 - puts['Kelly']) * rfg
-	puts['LTM_KGD%']	= puts.apply(lambda x: 100 * diemize(x['LTM_KG%']/100, tdte_), axis=1)
+	if(ltm):
+		puts['LTM']			= puts.apply(lambda x: LTM_PUT(final_prices, x['strike'], zcb), axis=1)
+		puts['LTM_payout'] 	= puts['LTM'] / zcb
+		puts['LTM_E']		= puts['LTM_payout'] - puts['ask']
+		puts['LTM_E%']		= 100 * puts['LTM_E'] / puts['ask']
+		puts['LTM_signal']  = puts.apply(lambda x: LTM_signal(x['bid'], x['ask'], x['LTM']), axis=1)
+		puts['Markup%']		= 100 * (puts['ask'] - puts['LTM']) /  puts['LTM']
+		puts['Kelly'] 		= puts.apply(lambda x: ltm_kelly_put(final_prices, x['strike'], x['ask']), axis=1)
+		puts['Kelly%'] 		= 100 * puts['Kelly']
+		puts['P(gain)%'] 	= puts.apply(lambda x: 100*ltm_p_gain_put(final_prices, x['strike'], x['ask']), axis=1)
+		puts['LTM_CDF%']	= puts.apply(lambda x: 100*ltm_cdf(final_prices, x['strike']), axis=1)
+		puts['LTM_KE%']		= puts.apply(lambda x: max(x['LTM_E%'], 0)*max(x['Kelly'], 0), axis=1) #ignore negative*negative values for now
+		puts['LTM_KG%']		= puts['LTM_KE%'] + 100 * (1 - puts['Kelly']) * rfg
+		puts['LTM_KGD%']	= puts.apply(lambda x: 100 * diemize(x['LTM_KG%']/100, tdte_), axis=1)
 	
 	#spread
-	for i in range(1, len(puts)):
-		puts.loc[i, 'bid_spread'] = puts.loc[i, 'bid'] - puts.loc[i-1, 'ask']
-		puts.loc[i, 'ask_spread'] = puts.loc[i, 'ask'] - puts.loc[i-1, 'bid']
-		puts.loc[i, 'delta_spread'] = puts.loc[i, 'delta'] - puts.loc[i-1, 'delta']
-		puts.loc[i, 'theta_spread'] = puts.loc[i, 'theta'] - puts.loc[i-1, 'theta']
-		puts.loc[i, 'width_spread'] = puts.loc[i, 'strike'] - puts.loc[i-1, 'strike']
-		puts.loc[i, 'strike_spread'] = (puts.loc[i, 'strike'] + puts.loc[i-1, 'strike']) / 2
-		puts.loc[i, 'BSM_PDF'] = (puts.loc[i, 'BSM_CDF%'] - puts.loc[i-1, 'BSM_CDF%']) / (100 * puts.loc[i, 'width_spread'])
-	puts['omega_spread'] = puts['delta_spread'] * stock_price / puts['ask_spread']
-	puts['mark_spread'] = (puts['bid_spread'] + puts['ask_spread']) / 2
-	#dP/dK = pk - pk-h / h = spread/h
-	#cdf = dP/dK * 1/z
-	puts['DK'] = puts['mark_spread'] / puts['width_spread'] #interpret at average of strikes. (strike_spread)
-	puts['CDF%_spread'] = 100 * puts['DK'] / zcb
+	if(spread):
+		for i in range(1, len(puts)):
+			puts.loc[i, 'bid_spread'] = puts.loc[i, 'bid'] - puts.loc[i-1, 'ask']
+			puts.loc[i, 'ask_spread'] = puts.loc[i, 'ask'] - puts.loc[i-1, 'bid']
+			if(bsm):
+				puts.loc[i, 'delta_spread'] = puts.loc[i, 'delta'] - puts.loc[i-1, 'delta']
+				puts.loc[i, 'theta_spread'] = puts.loc[i, 'theta'] - puts.loc[i-1, 'theta']
+			puts.loc[i, 'width_spread'] = puts.loc[i, 'strike'] - puts.loc[i-1, 'strike']
+			puts.loc[i, 'strike_spread'] = (puts.loc[i, 'strike'] + puts.loc[i-1, 'strike']) / 2
+			if(bsm):
+				puts.loc[i, 'BSM_PDF'] = (puts.loc[i, 'BSM_CDF%'] - puts.loc[i-1, 'BSM_CDF%']) / (100 * puts.loc[i, 'width_spread'])
+		if(bsm):
+			puts['omega_spread'] = puts['delta_spread'] * stock_price / puts['ask_spread']
+		puts['mark_spread'] = (puts['bid_spread'] + puts['ask_spread']) / 2
+		#dP/dK = pk - pk-h / h = spread/h
+		#cdf = dP/dK * 1/z
+		puts['DK'] = puts['mark_spread'] / puts['width_spread'] #interpret at average of strikes. (strike_spread)
+		puts['CDF%_spread'] = 100 * puts['DK'] / zcb
 
-	#fly
-	for i in range(2,len(puts)):
-		puts.loc[i, 'bid_fly'] = puts.loc[i, 'bid_spread'] - puts.loc[i-1, 'ask_spread']
-		puts.loc[i, 'ask_fly'] = puts.loc[i, 'ask_spread'] - puts.loc[i-1, 'bid_spread']
-		puts.loc[i, 'width_fly'] = puts.loc[i, 'strike_spread'] - puts.loc[i-1, 'strike_spread']
-		puts.loc[i, 'strike_fly'] = (puts.loc[i, 'strike_spread'] + puts.loc[i-1, 'strike_spread']) / 2
-		puts.loc[i, 'DK2'] = (puts.loc[i, 'DK'] - puts.loc[i-1, 'DK']) / puts.loc[i, 'width_fly']
-	puts['mark_fly'] = (puts['bid_fly'] + puts['ask_fly']) / 2
-	puts['PDF_fly'] = 100 * puts['DK2'] / zcb
+		#fly
+		if(fly):
+			for i in range(2,len(puts)):
+				puts.loc[i, 'bid_fly'] = puts.loc[i, 'bid_spread'] - puts.loc[i-1, 'ask_spread']
+				puts.loc[i, 'ask_fly'] = puts.loc[i, 'ask_spread'] - puts.loc[i-1, 'bid_spread']
+				puts.loc[i, 'width_fly'] = puts.loc[i, 'strike_spread'] - puts.loc[i-1, 'strike_spread']
+				puts.loc[i, 'strike_fly'] = (puts.loc[i, 'strike_spread'] + puts.loc[i-1, 'strike_spread']) / 2
+				puts.loc[i, 'DK2'] = (puts.loc[i, 'DK'] - puts.loc[i-1, 'DK']) / puts.loc[i, 'width_fly']
+			puts['mark_fly'] = (puts['bid_fly'] + puts['ask_fly']) / 2
+			puts['PDF_fly'] = 100 * puts['DK2'] / zcb
 
 
 '''

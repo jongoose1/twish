@@ -72,7 +72,7 @@ while(True):
 	print("{}{:5} ${:<7.2f} {:<+3.2f}%{}".format(color, ticker, stock_price, percent_change, Fore.RESET, dividend_yield, risk_free_rate))
 	print("Yield: {:.2f}%, Risk Free Rate {:.2f}%".format(100*dividend_yield, 100*risk_free_rate))
 	print("T fit: DF={:.6f}, LOC={:.6f}, SCALE={:.6f}".format(df, loc, scale))
-	print("Kelly%: {}, P(ruin): {}".format(100*kelly_stock(df, loc, scale), p_ruin(df,loc,scale,1)))
+	print("Kelly: {:.2f}%, P(ruin): {}".format(100*kelly_stock(df, loc, scale), p_ruin(df,loc,scale,1)))
 	for option in options:
 		print("{:<3} {} ({}DTE)	({} trading days) CALLS/PUTS".format(i, option, int(dte(option)), tdte(option)))
 		i += 1
@@ -103,7 +103,7 @@ while(True):
 		print("{}{:5} ${:<7.2f} {:<+3.2f}%{}".format(color, ticker, stock_price, percent_change, Fore.RESET, dividend_yield, risk_free_rate))
 		print("Yield: {:.2f}%, Risk Free Rate {:.2f}%".format(100*dividend_yield, 100*risk_free_rate))
 		print("T fit: DF={:.6f}, LOC={:.6f}, SCALE={:.6f}".format(df, loc, scale))
-		print("Kelly%: {}, P(ruin): {}".format(100*kelly_stock(df, loc, scale), p_ruin(df,loc,scale,1)))
+		print("Kelly: {:.2f}, P(ruin): {}".format(100*kelly_stock(df, loc, scale), p_ruin(df,loc,scale,1)))
 		print("{} {} ({}DTE) ({} trading days)".format(ticker, option, int(dte(option)), tdte(option)))
 		print(merged[columns_to_print].iloc[::-1].to_string(index=False))
 
