@@ -25,7 +25,7 @@ fly_cols = ['strike', 'bid', 'mark', 'ask', 'PDF']
 call_fly_cols = ['strike'] + [col+'_fly_call' for col in fly_cols]
 put_fly_cols = ['strike'] + [col+'_fly_put' for col in fly_cols]
 
-ltm_cols = ['ask', 'LTM', 'LTM_signal', 'Markup%', 'Kelly%', 'P(gain)%', 'LTM_CDF%', 'LTM_E%', 'LTM_KGD%']
+ltm_cols = ['ask', 'LTM', 'LTM_signal', 'Markup%', 'Kelly%', 'P(gain)%', 'Avg(gain)%', 'Avg(loss)%', 'LTM_CDF%', 'LTM_E%', 'LTM_KGD%']
 call_ltm_cols = ['strike'] + [col+'_call' for col in ltm_cols]
 put_ltm_cols = ['strike'] + [col+'_put' for col in ltm_cols]
 while(True):
@@ -44,14 +44,14 @@ while(True):
 		sub = input("substitue t fit? (y/n/manual): ").upper()
 		if sub == 'Y' or sub=='YES':
 			new_ticker = input("substitue ticker: ")
-			fit, df, loc, scale = get_t_fit(new_ticker)
+			fit, df, loc, scale, mse = get_t_fit(new_ticker)
 		elif sub == 'M' or sub == 'MANUAL':
 			fit = True
 			df = float(input("NU/DF: "))
 			loc = float(input("MU/LOC: "))
 			scale = float(input("TAU/SCALE: "))
 		else:
-			fit, df, loc, scale = get_t_fit(ticker)
+			fit, df, loc, scale, mse = get_t_fit(ticker)
 	
 	options = quote.options
 	stock_price = (info['bid'] + info['ask']) / 2 
@@ -67,7 +67,7 @@ while(True):
 	i = 1
 	print("{}{:5} ${:<7.2f} {:<+3.2f}%{}".format(color, ticker, stock_price, percent_change, Fore.RESET, dividend_yield, risk_free_rate))
 	print("Yield: {:.2f}%, Risk Free Rate {:.2f}%".format(100*dividend_yield, 100*risk_free_rate))
-	print("T fit: DF={:.6f}, LOC={:.6f}, SCALE={:.6f}".format(df, loc, scale))
+	print("T fit: DF={:.6f}, LOC={:.6f}, SCALE={:.6f}, MSE={:.6f}".format(df, loc, scale, mse))
 	print("Kelly: {:.2f}%, P(ruin): {}".format(100*kelly_stock(df, loc, scale), p_ruin(df,loc,scale,1)))
 	for option in options:
 		print("{:<3} {} ({}DTE)	({} trading days) CALLS/PUTS".format(i, option, int(dte(option)), tdte(option)))
@@ -87,7 +87,7 @@ while(True):
 	
 	chain = quote.option_chain(option)
 	
-	add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, dividend_yield, df, loc, scale, 100000,tdte(option))
+	add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, dividend_yield, df, loc, scale, 1000000,tdte(option))
 	merged = chain.calls.merge(chain.puts, left_on='strike', right_on='strike', suffixes=('_call','_put'))
 	merged['C-P'] = merged['ask_call']-merged['bid_put']
 	merged['P-C'] = merged['bid_call']-merged['ask_put']
@@ -98,8 +98,8 @@ while(True):
 	while(not done):
 		print("{}{:5} ${:<7.2f} {:<+3.2f}%{}".format(color, ticker, stock_price, percent_change, Fore.RESET, dividend_yield, risk_free_rate))
 		print("Yield: {:.2f}%, Risk Free Rate {:.2f}%".format(100*dividend_yield, 100*risk_free_rate))
-		print("T fit: DF={:.6f}, LOC={:.6f}, SCALE={:.6f}".format(df, loc, scale))
-		print("Kelly: {:.2f}, P(ruin): {}".format(100*kelly_stock(df, loc, scale), p_ruin(df,loc,scale,1)))
+		print("T fit: DF={:.6f}, LOC={:.6f}, SCALE={:.6f}, MSE={:.6f}".format(df, loc, scale, mse))
+		print("Kelly: {:.2f}%, P(ruin): {}".format(100*kelly_stock(df, loc, scale), p_ruin(df,loc,scale,1)))
 		print("{} {} ({}DTE) ({} trading days)".format(ticker, option, int(dte(option)), tdte(option)))
 		print(merged[columns_to_print].iloc[::-1].to_string(index=False))
 

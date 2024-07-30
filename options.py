@@ -8,14 +8,19 @@ from scipy.stats import norm, t
 import statistics
 import pandas_market_calendars as mcal
 import pandas as pd
+import matplotlib.pyplot as plt
 
 def ZCB(risk_free_rate, years_to_expiry):
 	return (1+risk_free_rate)**(-years_to_expiry)
 
 def annualize(rate, days):
+	if days == 0:
+		return 0
 	return (1 + rate)**(252/days) - 1
 
 def diemize(rate, days):
+	if days == 0:
+		return 0
 	return (1 + rate)**(1/days) - 1
 
 def LTM_signal(bid, ask, ltm):
@@ -36,14 +41,23 @@ def get_t_fit(ticker):
 		data = yf.download(ticker, period = 'max')
 		if data.empty:
 			print("could now download historical data")
-			return False, 0, 0, 0
+			return False, 0, 0, 0, 0
 		data.to_pickle(ticker+'.pkl')
 	data = data.reset_index()
 	data.loc[0, 'percent_change'] = 0
 	for i in range(1, len(data)):
 		data.loc[i, 'percent_change'] = 100* (data.loc[i, 'Close'] - data.loc[i-1, 'Close']) / data.loc[i-1, 'Close']
 	nu, mu, tau = t.fit(data['percent_change'])
-	return True, nu, mu, tau
+	num_bins = int(len(data)/100)
+	actuals, bin_lefts, patches = plt.hist(data['percent_change'], bins=num_bins)
+	bin_lefts = bin_lefts[:-1]
+	xmin, xmax = plt.xlim()
+	bin_width = (xmax-xmin)/num_bins
+	bin_centers = [bin_left+bin_width/2 for bin_left in bin_lefts]
+	t_pdf = t.pdf(bin_centers, nu, mu, tau)
+	ts = t_pdf*bin_width*len(data)
+	mse = np.square(np.subtract(actuals, ts)).mean()
+	return True, nu, mu, tau, mse
 
 def p_ruin(nu,mu,tau, days=1):
 	# probability of ruin after days days
@@ -88,45 +102,57 @@ def ltm_cdf(final_prices, price):
 def ltm_p_gain_call(final_prices, strike, cost):
 	return sum(1 for x in final_prices if x > strike+cost) / len(final_prices)
 
-def ltm_kelly_call(final_prices, strike, cost):
+def ltm_e_gain_call(final_prices, strike, cost):
 	if cost == 0:
 		return float('nan')
-	breakeven = strike + cost
-	# p = p(gain)
-	p = sum(1 for x in final_prices if x > breakeven) / len(final_prices)
-	#q = 1 - p
-	q = 1 - p
-	if (p == 0):
+	gains = [(x-strike-cost)/cost for x in final_prices if x > strike+cost]
+	if len(gains) == 0:
 		return 0
-	if (q == 0):
-		return 1
+	return statistics.fmean(gains)
+
+def ltm_e_loss_call(final_prices, strike, cost):
+	if cost == 0:
+		return float('nan')
+	losses = [(cost - max(x-strike, 0))/cost for x in final_prices if x < strike+cost]
+	if len(losses) == 0:
+		return 0
+	return statistics.fmean(losses)
+
+
+def ltm_kelly(p, g, l):
+	# p = p(gain)
+	#q = 1 - p
 	#g = fraction gained on positive outcome
-	g = statistics.fmean([(x-breakeven)/cost for x in final_prices if x > breakeven])
 	#l = fraction that is lost on negative outcome
-	l = statistics.fmean([(cost - max(x-strike, 0))/cost for x in final_prices if x < breakeven])
+	q = 1 - p
+	if p == 0:
+		return 0
+	if q == 0:
+		return 1
+	if g == 0:
+		return 0
+	if l == 0:
+		return 1
 	return min(p/l - q/g, 1)
 
 def ltm_p_gain_put(final_prices, strike, cost):
 	return sum(1 for x in final_prices if x < strike-cost) / len(final_prices)
 
-def ltm_kelly_put(final_prices, strike, cost):
+def ltm_e_gain_put(final_prices, strike, cost):
 	if cost == 0:
 		return float('nan')
-	breakeven = strike - cost
-	# p = p(gain)
-	p = sum(1 for x in final_prices if x < breakeven) / len(final_prices)
-	#q = 1 - p
-	q = 1 - p
-	if (p == 0):
+	gains = [(min(max(strike-x,0),strike)-cost)/cost for x in final_prices if x < strike-cost]
+	if len(gains) == 0:
 		return 0
-	if (q == 0):
-		return 1
-	#g = fraction gained on positive outcome
-	g = statistics.fmean([(min(max(strike-x,0),strike)-cost)/cost for x in final_prices if x < breakeven])
-	#l = fraction that is lost on negative outcome
-	l = statistics.fmean([(cost - max(strike-x, 0))/cost for x in final_prices if x > breakeven])
-	return min(p/l - q/g, 1)
+	return statistics.fmean(gains)
 
+def ltm_e_loss_put(final_prices, strike, cost):
+	if cost == 0:
+		return float('nan')
+	losses =  [(cost - max(strike-x, 0))/cost for x in final_prices if x > strike-cost]
+	if len(losses) == 0:
+		return 0
+	return statistics.fmean(losses)
 
 def BSM_CALL(stock_price, strike_price, years_to_expiry, risk_free_rate, dividend_yield, volatility):
 	if volatility == 0:
@@ -202,7 +228,7 @@ cdi = pd.date_range(start = bdi.min(),end = bdi.max())
 s = s.reindex(index = cdi).fillna(0).astype(int).cumsum()
 def tdte(option):
 	# option str %Y-%m-%d
-	return s[option]
+	return s[option] - s[today_str]
 
 def get_rfr():
 	try:
@@ -253,9 +279,12 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 		calls['LTM_E%']		= 100 * calls['LTM_E'] / calls['ask']
 		calls['LTM_signal'] = calls.apply(lambda x: LTM_signal(x['bid'], x['ask'], x['LTM']), axis=1)
 		calls['Markup%']	= 100 * (calls['ask'] - calls['LTM']) /  calls['LTM']
-		calls['Kelly'] 	= calls.apply(lambda x: ltm_kelly_call(final_prices, x['strike'], x['ask']), axis=1)
-		calls['Kelly%'] 	= 100 * calls['Kelly']
 		calls['P(gain)%'] 	= calls.apply(lambda x: 100*ltm_p_gain_call(final_prices, x['strike'], x['ask']), axis=1)
+		calls['P(loss)%']	= 100 - calls['P(gain)%']
+		calls['Avg(gain)%'] = calls.apply(lambda x: 100*ltm_e_gain_call(final_prices, x['strike'], x['ask']), axis=1)
+		calls['Avg(loss)%'] = calls.apply(lambda x: 100*ltm_e_loss_call(final_prices, x['strike'], x['ask']), axis=1)
+		calls['Kelly'] 		= calls.apply(lambda x: ltm_kelly(x['P(gain)%']/100, x['Avg(gain)%']/100, x['Avg(loss)%']/100), axis=1)
+		calls['Kelly%'] 	= 100 * calls['Kelly']
 		calls['LTM_CDF%']	= calls.apply(lambda x: 100*ltm_cdf(final_prices, x['strike']), axis=1)
 		calls['LTM_KE%']	= calls.apply(lambda x: max(x['LTM_E%'], 0)*max(x['Kelly'], 0), axis=1) #ignore negative*negative values for now
 		calls['LTM_KG%']	= calls['LTM_KE%'] + 100 * (1 - calls['Kelly']) * rfg
@@ -329,14 +358,17 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 		puts['LTM_E%']		= 100 * puts['LTM_E'] / puts['ask']
 		puts['LTM_signal']  = puts.apply(lambda x: LTM_signal(x['bid'], x['ask'], x['LTM']), axis=1)
 		puts['Markup%']		= 100 * (puts['ask'] - puts['LTM']) /  puts['LTM']
-		puts['Kelly'] 		= puts.apply(lambda x: ltm_kelly_put(final_prices, x['strike'], x['ask']), axis=1)
-		puts['Kelly%'] 		= 100 * puts['Kelly']
 		puts['P(gain)%'] 	= puts.apply(lambda x: 100*ltm_p_gain_put(final_prices, x['strike'], x['ask']), axis=1)
+		puts['P(loss)%']	= 100 - puts['P(gain)%']
+		puts['Avg(gain)%'] 	= puts.apply(lambda x: 100*ltm_e_gain_put(final_prices, x['strike'], x['ask']), axis=1)
+		puts['Avg(loss)%'] 	= puts.apply(lambda x: 100*ltm_e_loss_put(final_prices, x['strike'], x['ask']), axis=1)
+		puts['Kelly'] 		= puts.apply(lambda x: ltm_kelly(x['P(gain)%']/100, x['Avg(gain)%']/100, x['Avg(loss)%']/100), axis=1)
+		puts['Kelly%'] 		= 100 * puts['Kelly']
 		puts['LTM_CDF%']	= puts.apply(lambda x: 100*ltm_cdf(final_prices, x['strike']), axis=1)
 		puts['LTM_KE%']		= puts.apply(lambda x: max(x['LTM_E%'], 0)*max(x['Kelly'], 0), axis=1) #ignore negative*negative values for now
 		puts['LTM_KG%']		= puts['LTM_KE%'] + 100 * (1 - puts['Kelly']) * rfg
 		puts['LTM_KGD%']	= puts.apply(lambda x: 100 * diemize(x['LTM_KG%']/100, tdte_), axis=1)
-	
+		
 	#spread
 	if(spread):
 		for i in range(1, len(puts)):
