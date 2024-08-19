@@ -87,7 +87,7 @@ while(True):
 	
 	chain = quote.option_chain(option)
 	
-	add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, dividend_yield, df, loc, scale, 1000000,tdte(option))
+	add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, dividend_yield, df, loc, scale, 300000,tdte(option))
 	merged = chain.calls.merge(chain.puts, left_on='strike', right_on='strike', suffixes=('_call','_put'))
 	merged['C-P'] = merged['ask_call']-merged['bid_put']
 	merged['P-C'] = merged['bid_call']-merged['ask_put']

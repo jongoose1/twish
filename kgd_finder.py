@@ -29,14 +29,14 @@ while(True):
 		sub = input("substitue t fit? (y/n/manual): ").upper()
 		if sub == 'Y' or sub=='YES':
 			new_ticker = input("substitue ticker: ")
-			fit, df, loc, scale = get_t_fit(new_ticker)
+			fit, df, loc, scale, mse = get_t_fit(new_ticker)
 		elif sub == 'M' or sub == 'MANUAL':
 			fit = True
 			df = float(input("NU/DF: "))
 			loc = float(input("MU/LOC: "))
 			scale = float(input("TAU/SCALE: "))
 		else:
-			fit, df, loc, scale = get_t_fit(ticker)
+			fit, df, loc, scale, mse = get_t_fit(ticker)
 	
 	max_tdte = int(input("max tdte:"))
 	options = quote.options

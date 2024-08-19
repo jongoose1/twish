@@ -228,7 +228,11 @@ cdi = pd.date_range(start = bdi.min(),end = bdi.max())
 s = s.reindex(index = cdi).fillna(0).astype(int).cumsum()
 def tdte(option):
 	# option str %Y-%m-%d
-	return s[option] - s[today_str]
+	try:
+		t = s[option] - s[today_str]
+	except:
+		t = s[option]
+	return t
 
 def get_rfr():
 	try:
@@ -304,10 +308,15 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 			if(bsm):
 				calls.loc[i, 'BSM_PDF'] = (calls.loc[i+1, 'BSM_CDF%'] - calls.loc[i, 'BSM_CDF%']) / (100 * calls.loc[i, 'width_spread'])
 		if(bsm):
+			calls.loc[len(calls)-1, 'BSM_PDF'] = float('nan')
+			calls.loc[len(calls)-1, 'delta_spread'] = float('nan')
+			calls.loc[len(calls)-1, 'ask_spread'] = float('nan')
 			calls['omega_spread'] = calls['delta_spread'] * stock_price / calls['ask_spread']
+		calls.loc[len(calls)-1, 'bid_spread'] = float('nan')
 		calls['mark_spread'] = (calls['bid_spread'] + calls['ask_spread']) / 2
 		#dC/dK = ck+h - ck / h = -spread/h
 		#cdf = 1 + dC/dK * 1/z
+		calls.loc[len(calls)-1, 'width_spread'] = float('nan')
 		calls['DK'] = -calls['mark_spread'] / calls['width_spread'] #interpret at average of strikes. (strike_spread)
 		calls['CDF%_spread'] = 100 * (1 + calls['DK'] / zcb)
 
@@ -319,7 +328,13 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 				calls.loc[i, 'width_fly'] = calls.loc[i+1, 'strike_spread'] - calls.loc[i, 'strike_spread']
 				calls.loc[i, 'strike_fly'] = (calls.loc[i, 'strike_spread'] + calls.loc[i+1, 'strike_spread']) / 2
 				calls.loc[i, 'DK2'] = (calls.loc[i+1, 'DK'] - calls.loc[i, 'DK']) / calls.loc[i, 'width_fly']
+			calls.loc[len(calls)-1, 'bid_fly'] = float('nan')
+			calls.loc[len(calls)-2, 'bid_fly'] = float('nan')
+			calls.loc[len(calls)-1, 'ask_fly'] = float('nan')
+			calls.loc[len(calls)-2, 'ask_fly'] = float('nan')
 			calls['mark_fly'] = (calls['bid_fly'] + calls['ask_fly']) / 2
+			calls.loc[len(calls)-1, 'DK2'] = float('nan')
+			calls.loc[len(calls)-2, 'DK2'] = float('nan')
 			calls['PDF_fly'] = 100 * calls['DK2'] / zcb
 	
 	puts = chain.puts
@@ -382,10 +397,15 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 			if(bsm):
 				puts.loc[i, 'BSM_PDF'] = (puts.loc[i, 'BSM_CDF%'] - puts.loc[i-1, 'BSM_CDF%']) / (100 * puts.loc[i, 'width_spread'])
 		if(bsm):
+			puts.loc[0, 'BSM_PDF'] = float('nan')
+			puts.loc[0, 'delta_spread'] = float('nan')
+			puts.loc[0, 'ask_spread'] = float('nan')
 			puts['omega_spread'] = puts['delta_spread'] * stock_price / puts['ask_spread']
+		puts.loc[0, 'bid_spread'] = float('nan')
 		puts['mark_spread'] = (puts['bid_spread'] + puts['ask_spread']) / 2
 		#dP/dK = pk - pk-h / h = spread/h
 		#cdf = dP/dK * 1/z
+		puts.loc[0, 'width_spread'] = float('nan')
 		puts['DK'] = puts['mark_spread'] / puts['width_spread'] #interpret at average of strikes. (strike_spread)
 		puts['CDF%_spread'] = 100 * puts['DK'] / zcb
 
@@ -397,7 +417,13 @@ def add_custom_columns(chain, stock_price, years_to_expiry, risk_free_rate, divi
 				puts.loc[i, 'width_fly'] = puts.loc[i, 'strike_spread'] - puts.loc[i-1, 'strike_spread']
 				puts.loc[i, 'strike_fly'] = (puts.loc[i, 'strike_spread'] + puts.loc[i-1, 'strike_spread']) / 2
 				puts.loc[i, 'DK2'] = (puts.loc[i, 'DK'] - puts.loc[i-1, 'DK']) / puts.loc[i, 'width_fly']
+			puts.loc[0, 'bid_fly'] = float('nan')
+			puts.loc[1, 'bid_fly'] = float('nan')
+			puts.loc[0, 'ask_fly'] = float('nan')
+			puts.loc[1, 'ask_fly'] = float('nan')
 			puts['mark_fly'] = (puts['bid_fly'] + puts['ask_fly']) / 2
+			puts.loc[0, 'DK2'] = float('nan')
+			puts.loc[1, 'DK2'] = float('nan')
 			puts['PDF_fly'] = 100 * puts['DK2'] / zcb
 
 
